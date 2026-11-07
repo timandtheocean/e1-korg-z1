@@ -1,0 +1,154 @@
+           KORG Z1 - Multi Set Parameters                     Revision 1.0 (1997.9.12)
++====+===============================+============================+=========+=========+
+| ID |      Parameter Name           |        Display             |  Value  |  Size   |
++====+===============================+============================+=========+=========+
+|    |[Common]                       |                            |         |         |
+|1~16|Multi Set Name                 |                            |20H~7Fh  |16       |
++----+-------------------------------+----------------------------+---------+---------+
+|    |[Timbre 1]                     |                            |         |         |
+|    |(Timbre)                       |                            |         |         |
+|  17|Program Bank                   |A/B                         |0~1      |1(Bit7)  |
+|  18|Program Number                 |001~128                     |0~127    |^(Bit0~6)|
+|  19|Reserve Voice                  |OFF/1~12(18)                |0~12(18) |1        |
+|    |(Pitch)                        |                            |         |         |
+|  20|Transpose                      |-24~+24                     |-24~+24  |1        |
+|  21|Detune                         |-50~+50cent                 |-50~+50  |1        |
+|  22|Scale Select                   |CMN/PRG                     |0~1      |1(Bit4~7)|
+|  23|Arpeggiator                    |DIS/ENA                     |0~1      |^(Bit0~3)|
+|    |(Mixer)                        |                            |         |         |
+|  24|Output Level                   |0~127/PROG                  |0~128    |1        |
+|  25|Panpot                         |0~127/PROG                  |0~128    |1        |
+|  26|Effect Send                    |0~100/PROG                  |0~101    |1        |
+|    |(Zone)                         |                            |         |         |
+|  27|Key Zone Top                   |C-1~G9                      |0~127    |1        |
+|  28|Key Zone Bottom                |C-1~G9                      |0~127    |1        |
+|  29|Velocity Zone Top              |1~127                       |1~127    |1        |
+|  30|Velocity Zone Bottom           |1~127                       |1~127    |1        |
+|    |(MIDI)                         |                            |         |         |
+|  31|MIDI Channel                   |1~16/GLB                    |0~15/16  |1(Bit0~4)|
+|  32|Program Change                 |DIS/ENA                     |0~1      |^(Bit7)  |
+|  33|Pitch Bend                     |DIS/CMN/PRG                 |0~2      |1(Bit6~7)|
+|  34|After Touch                    |DIS/ENA                     |0~1      |^(Bit5)  |
+|  35|Modulation Wheel               |DIS/ENA                     |0~1      |^(Bit4)  |
+|  36|X-Y Pad Controller             |DIS/ENA                     |0~1      |^(Bit3)  |
+|  37|Damper                         |DIS/ENA                     |0~1      |^(Bit2)  |
+|  38|Portamento SW                  |DIS/ENA                     |0~1      |^(Bit1)  |
+|  39|Realtime Edit                  |DIS/ENA                     |0~1      |^(Bit0)  |
+|  40|Performance Edit               |DIS/ENA                     |0~1      |1(Bit7)  |
+|  41|Others                         |DIS/ENA                     |0~1      |^(Bit6)  |
+|  42|reserved                       |                            |         |^(Bit5)  |
+|  43|reserved                       |                            |         |1        |
++----+-------------------------------+----------------------------+---------+---------+
+| 44~|[Timbre 2]                     |                            |         |16       |
++----+-------------------------------+----------------------------+---------+---------+
+| 71~|[Timbre 3]                     |                            |         |16       |
++----+-------------------------------+----------------------------+---------+---------+
+| 98~|[Timbre 4]                     |                            |         |16       |
++----+-------------------------------+----------------------------+---------+---------+
+|125~|[Timbre 5]                     |                            |         |16       |
++----+-------------------------------+----------------------------+---------+---------+
+|152~|[Timbre 6]                     |                            |         |16       |
++----+-------------------------------+----------------------------+---------+---------+
+|    |[Effect]                       |                            |         |         |
+|    |(Effect 1)                     |                            |         |         |
+| 179|Effect1 Select                 |OD~R.SPEAKER            [*1]|0~14     |1        |
+|    |Effect1 Setting                |                            |         |22       |
+|    |(Effect 2)                     |                            |         |         |
+| 180|Effect2 Select                 |OD~DELAY                [*1]|0~10     |1        |
+|    |Effect2 Setting                |                            |         |22       |
+|    |(Master Effect)                |                            |         |         |
+| 181|Master Effect Select           |St.DELAY~REVERB-Room    [*2]|0~2      |1        |
+|    |Master Effect Setting          |                            |         |18       |
+| 182|Master Low EQ Freq             |0~49                        |0~49     |1        |
+| 183|Master Low EQ Gain             |-18.0~+18.0dB               |-36~+36  |1        |
+| 184|Master High EQ Freq            |0~49                        |0~49     |1        |
+| 185|Master High EQ Gain            |-18.0~+18.0dB               |-36~+36  |1        |
++----+-------------------------------+----------------------------+---------+---------+
+|    |[Common]                       |                            |         |         |
+| 186|Pitch Bender Intensity(+)      |-60~24                      |-60~+24  |1        |
+| 187|Pitch Bender Intensity(-)      |-60~24                      |-60~+24  |1        |
+| 188|Pitch Bender Step(+)           |0,/8,/4,/2,1~12             |0~15     |1(Bit0~3)|
+| 189|Pitch Bender Step(-)           |0,/8,/4,/2,1~12             |0~15     |^(Bit4~7)|
+| 190|Scale Key                      |C~B                         |0~11     |1(Bit0~3)|
+| 191|Scale Type                     |0~10                        |0~10     |^(Bit4~7)|
+| 192|Portamento SW                  |OFF/ON                      |0/1      |1(Bit0)  |
+| 193|Unison SW                      |OFF/ON                      |0/1      |^(Bit1)  |
+|    |reserved                       |                            |         |10       |
++----+-------------------------------+----------------------------+---------+---------+
+|    |[Controller]                   |                            |         |         |
+| 194|SW1 Function                   |MOD.SW1/MasterFX SW/~   [*3]|0~7      |1(Bit0~3)|
+| 195|SW1 Mode                       |LATCH/UNLATCH               |0/1      |^(Bit4)  |
+| 196|SW2 Function                   |MOD.SW1/MasterFX SW/~   [*4]|0~7      |1(Bit0~3)|
+| 197|SW2 Mode                       |LATCH/UNLATCH               |0/1      |^(Bit4)  |
+| 198|Assignable Foot SW Function    |FT.SW/MIDI Damper/~     [*5]|0~12     |1(Bit0~3)|
+| 199|Assignable Foot SW Mode        |LATCH/UNLATCH               |0/1      |^(Bit4)  |
+| 200|Assignable Pedal Function      |FT.Pedal/MIDI BC/~      [*6]|0~5      |1(Bit0~2)|
+| 201|Pad Hold                       |OFF/ON                      |0/1      |^(Bit3)  |
++----+-------------------------------+----------------------------+---------+---------+
+|    |[Link Arpeggio]                |                            |         ||        |
+| 202|Pattern                        |UP~U-35                     |0~19     |1        |
+| 203|Latch                          |OFF/ON                      |0/1      |1(Bit0)  |
+| 204|Key Sync                       |OFF/ON                      |0/1      |^(Bit1)  |
+| 205|Octaves                        |1~4                         |0~3      |^(Bit2~3)|
+| 206|Keyboard OFF/ON                |OFF/ON                      |0/1      |^(Bit4)  |
+| 207|Auto Running                   |OFF/ON                      |0/1      |^(Bit5)  |
+| 208|Velocity                       |-127~+127                   |-127~+127|1        |
+| 209|Gate                           |-127~+127                   |-127~+127|1        |
+| 210|Resolution                     |16T/16/8T/8/4T/4            |0~5      |1        |
+| 211|Speed                          |30~285                      |0~255    |1        |
+|    |reserved                       |                            |         |2        |
++====+===============================+============================+=========+=========+
+|    |                               |                            |Total    |      208|
++====+===============================+============================+=========+=========+
+
+
+[*1]:Effect1&2 Type                     [*2]:Master Effect Type
++--+-------------------------------+    +--+-------------------------------+
+|ID|            Name               |    |ID|            Name               |
++--+-------------------------------+    +--+-------------------------------+
+| 0|Overdrive                      |    | 0|Stereo Delay                   |
+| 1|Compressor                     |    | 1|Reverb-Hall                    |
+| 2|Parametric EQ                  |    | 2|Reverb-Room                    |
+| 3|Wah                            |    +--+-------------------------------+
+| 4|Exciter                        |
+| 5|Decimator                      |
+| 6|Chorus                         |
+| 7|Flanger                        |
+| 8|Phaser                         |
+| 9|Rotary Speaker-small           |
+|10|Delay-mono                     |
+|11|Talking Modulator    (FX1 only)|
+|12|Multitap Delay       (FX1 only)|
+|13|Ensemble             (FX1 only)|
+|14|Rotary Speaker-Large (FX1 only)|
++--+-------------------------------+
+
+[*3]:Assignable SW1 Function List      [*4]Assignable SW2 Function List
++----------------------------------+   +----------------------------------+
+|Mod.SW1(CC#80)                    |   |Mod.SW2(CC#81)                    |
+|Master FX OFF/ON(CC#91)           |   |Master FX OFF/ON(CC#91)           |
+|FX1 OFF/ON(CC#92)                 |   |FX1 OFF/ON(CC#92)                 |
+|FX2 OFF/ON(CC#93)                 |   |FX2 OFF/ON(CC#93)                 |
+|Octave Up                         |   |Octave Up                         |
+|Octave Down                       |   |Octave Down                       |
+|Mono SW(CC#18)                    |   |Mono SW(CC#18)                    |
+|Unison OFF/ON(CC#75)              |   |Unison OFF/ON(CC#75)              |
++----------------------------------+   +----------------------------------+
+
+[*5]:Assignable Foot SW Function List  [*6]:Assignable Pedal Function List
++----------------------------------+   +----------------------------------+
+|Foot SW(CC#82)                    |   |Foot Pedal(CC#4)                  |
+|MIDI Damper(CC#64)                |   |MIDI Breath Control(CC#2)         |
+|MIDI Portamento SW(CC#65)         |   |MIDI Portamento Time(CC#5)        |
+|MIDI Sostenuto(CC#66)             |   |MIDI Volume(CC#7)                 |
+|Master FX OFF/ON(CC#92)           |   |MIDI Panpot(CC#10)                |
+|FX1 OFF/ON(CC#94)                 |   |MIDI Expression(CC#11)            |
+|FX2 OFF/ON(CC#95)                 |   +----------------------------------+
+|Octave Up                         |
+|Octave Down                       |
+|Mono SW(CC#18)                    |
+|Unison OFF/ON(CC#75)              |
+|Arpeggio OFF/ON                   |
+|Pad Hold                          |
++----------------------------------+
+

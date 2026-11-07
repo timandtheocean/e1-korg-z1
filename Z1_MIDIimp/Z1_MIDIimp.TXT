@@ -1,0 +1,721 @@
+           KORG Z1 MIDI Implementation          Revision 1.0 (1997.9.12)
+
+1.TRANSMITTED DATA
+
+1-1 CHANNEL MESSAGES            [H]:Hex,  [D]:Decimal
++--------+---------+-------------+--------------------------------------+
+| Status | Second  |   Third     |           Description                |
+|  [Hex] | [H] [D] |  [H]   [D]  |                                      |
++--------+---------+-------------+--------------------------------------+
+|   8n   | kk (kk) | vv    (vv)  | Note Off    vv=0~127                 |
+|   9n   | kk (kk) | 00    (00)  | Note Off                             |
+|   9n   | kk (kk) | vv    (vv)  | Note On     vv=1~127                 |
+|   Bn   | 00 (00) | mm    (mm)  | Program Bank Select(MSB)             |
+|   Bn   | 01 (01) | vv    (vv)  | Pitch Modulation Depth               |
+|   Bn   | 02 (02) | vv    (vv)  | Breath Control Depth                 |
+|   Bn   | 04 (04) | vv    (vv)  | Foot Control                         |
+|   Bn   | 05 (05) | vv    (vv)  | Portamento Time                      |
+|   Bn   | 06 (06) | vv    (vv)  | Data Entry(MSB)                  [*1]|
+|   Bn   | 07 (07) | vv    (vv)  | Volume                               |
+|   Bn   | 09 (09) | vv    (vv)  | Arpeggio Resolution                  |
+|   Bn   | 0A (10) | vv    (vv)  | Panpot                               |
+|   Bn   | 0B (11) | vv    (vv)  | Expression                           |
+|   Bn   | 0E (14) | vv    (vv)  | Arpeggio Gate                        |
+|   Bn   | 0F (15) | vv    (vv)  | Arpeggio Velocity                    |
+|   Bn   | 10 (16) | vv    (vv)  | X-Y Pad (X)                          |
+|   Bn   | 11 (17) | vv    (vv)  | X-Y Pad (Y)                          |
+|   Bn   | 12 (18) | vv    (vv)  | Mono SW                              |
+|   Bn   | 13 (19) | vv    (vv)  | Knob1                                |
+|   Bn   | 14 (20) | vv    (vv)  | Knob2                                |
+|   Bn   | 15 (21) | vv    (vv)  | Knob3                                |
+|   Bn   | 16 (22) | vv    (vv)  | Knob4                                |
+|   Bn   | 17 (23) | vv    (vv)  | Knob5                                |
+|   Bn   | 18 (24) | vv    (vv)  | Filter1 Attack                       |
+|   Bn   | 19 (25) | vv    (vv)  | Filter1 Decay                        |
+|   Bn   | 1A (26) | vv    (vv)  | Filter1 Sustain                      |
+|   Bn   | 1B (27) | vv    (vv)  | Filter1 Release                      |
+|   Bn   | 1C (28) | vv    (vv)  | Filter2 Attack                       |
+|   Bn   | 1D (29) | vv    (vv)  | Filter2 Decay                        |
+|   Bn   | 1E (30) | vv    (vv)  | Filter2 Sustain                      |
+|   Bn   | 1F (31) | vv    (vv)  | Filter2 Release                      |
+|   Bn   | 20 (32) | bb    (bb)  | Program Bank Select(LSB)             |
+|   Bn   | 40 (64) |00/7F (0/127)| Sustain Off/On                       |
+|   Bn   | 41 (65) |00/7F (0/127)| Portamento Off/On                    |
+|   Bn   | 42 (66) |00/7F (0/127)| Sostenuto Off/On                     |
+|   Bn   | 4B (75) | vv    (vv)  | Unison SW                            |
+|   Bn   | 4C (76) | vv    (vv)  | Amp Attack                           |
+|   Bn   | 4D (77) | vv    (vv)  | Amp Decay                            |
+|   Bn   | 4E (78) | vv    (vv)  | Amp Sustain                          |
+|   Bn   | 4F (79) | vv    (vv)  | Amp Release                          |
+|   Bn   | 50 (80) |00/7F (0/127)| SW1 Off/On                           |
+|   Bn   | 51 (81) |00/7F (0/127)| SW2 Off/On                           |
+|   Bn   | 52 (82) |00/7F (0/127)| FootSW Off/On                        |
+|   Bn   | 53 (83) | vv    (vv)  | MixerSW                          [*2]|
+|   Bn   | 55 (85) | vv    (vv)  | Filter1 Cutoff                       |
+|   Bn   | 56 (86) | vv    (vv)  | Filter1 Resonance                    |
+|   Bn   | 57 (87) | vv    (vv)  | Filter1 EG Int.                      |
+|   Bn   | 58 (88) | vv    (vv)  | Filter2 Cutoff                       |
+|   Bn   | 59 (89) | vv    (vv)  | Filter2 Resonance                    |
+|   Bn   | 5A (90) | vv    (vv)  | Filter2 EG Int.                      |
+|   Bn   | 5B (91) | vv    (vv)  | Effect Send                          |
+|   Bn   | 5C (92) |00/7F (0/127)| MasterFx Off/On                      |
+|   Bn   | 5E (94) |00/7F (0/127)| Effect1 Off/On                       |
+|   Bn   | 5F (95) |00/7F (0/127)| Effect2 Off/On                       |
+|   Bn   | 62 (98) | vv    (vv)  | NRPN LSB                         [*1]|
+|   Bn   | 63 (99) | vv    (vv)  | NRPN MSB                         [*1]|
+|   Bn   | cc (cc) | vv    (vv)  | Control Change  cc=00~95             |
+|   Cn   | pp (pp) | --     --   | Program Change                       |
+|   Dn   | vv (vv) | --     --   | Channel Pressure (After Touch)       |
+|   En   | bb (bb) | bb    (bb)  | Pitch Bender Change                  |
++--------+---------+-------------+--------------------------------------+
+
+ n : MIDI Channel (0~15)
+ vv: Value
+
+[*1]:Non Registered Parameter Number
++---------+-----------------------------+---------------------------------+
+| MSB LSB |       Parameter             |     Data Entry(MSB) Value       |
+| [H] [H] |                             |                                 |
++---------+-----------------------------+---------------------------------+
+| 00  01  | Arpeggio Pattern Select     | 00~13:Int.Pat, 20h~33h:Card Pat |
+| 00  02  | Arpeggio On/Off             | 00:OFF, 7Fh:ON                  |
+| 00  03  | Arpeggio Octaves            | 00~03:1~4 Oct.                  |
+| 00  04  | Arpeggiator Latch On/Off    | 00:OFF, 7Fh:ON                  |
+| 00  05  | Arpeggiator Key Sync On/Off | 00:OFF, 7Fh:ON                  |
+| 00  06  | Arpeggio KBD On/Off         | 00:OFF, 7Fh:ON                  |
++---------+-----------------------------+---------------------------------+
+
+[*2]:MixerSW
++-----------+---------------------------+
+|    vv     | Description               |
++-----------+---------------------------+
+| 0--- x--- | OSC1 SW                   |
+| 0--x ---- | OSC2 SW                   |
+| 0-x- ---- | Sub OSC SW                |
+| 0x-- ---- | Noise Generator SW        |
++-----------+---------------------------+
+
+
+1-2 SYSTEM REALTIME MESSAGES
++-----------+-----------------------------------------------+
+| Status[H] | Description                                   |
++-----------+-----------------------------------------------+
+|    F8     | Timing Clock                              [*1]|
+|    FE     | Active Sensing                                |
++-----------+-----------------------------------------------+
+
+ [*1]:This message is transmitted when the "Clock Source" is 
+      set to "INTERNAL".
+
+
+1-3 UNIVERSAL SYSTEM EXCLUSIVE MESSAGES
+
+    DEVICE INQUIRY REPLY
++---------+-----------------------------------------------+
+| Byte[H] |                Description                    |
++---------+-----------------------------------------------+
+|   F0    | Exclusive Status                              |
+|   7E    | Non Realtime Message                          |
+|   0g    | MIDI GLOBAL CHANNEL  ( Device ID )            |
+|   06    | INQUIRY MESSAGE                               |
+|   02    | IDENTITY REPLY                                |
+|   42    | KORG ID              ( Manufacturers ID )     |
+|   46    | Z1 Series ID         ( Family ID   (LSB))     |
+|   00    |                      ( Family ID   (MSB))     |
+|   01    |                      ( Member ID   (LSB))     |
+|   00    |                      ( Member ID   (MSB))     |
+|   xx    |                      ( Minor Ver.  (LSB))     |
+|   xx    |                      ( Minor Ver.  (MSB))     |
+|   xx    |                      ( Major Ver.  (LSB))     |
+|   xx    |                      ( Major Ver.  (MSB))     |
+|   F7    | END OF EXCLUSIVE                              |
++---------+-----------------------------------------------+
+
+  This message is transmitted whenever a INQUIRY MESSAGE REQUEST 
+  is received.
+
+
+1-4 SYSTEM EXCLUSIVE MESSAGES
++-------------+--------------------------------------------------+
+| Function ID |                                                  |
+|    [Hex]    |                                                  |
++-------------+--------------------------------------------------+
+|     40      | CURRENT PROGRAM DATA DUMP                    [*1]|
+|     4C      | PROGRAM DATA DUMP                                |
+|     49      | CURRENT MULTI SETUP DATA DUMP                [*1]|
+|     4D      | MULTI SETUP DATA DUMP                            |
+|     6B      | CURRENT ARPEGGIO PATTERN DATA DUMP               |
+|     69      | ARPEGGIO PATTERN DATA DUMP                       |
+|     51      | GLOBAL/MIDI DATA DUMP                            |
+|     50      | ALL DATA(PROGRAM,MULTI,PATTERN,GLOBAL,MIDI) DUMP |
+|     41      | PARAMETER CHANGE                             [*2]|
+|     26      | DATA FORMAT ERROR                                |
+|     23      | DATA LOAD COMPLETED                              |
+|     24      | DATA LOAD ERROR                                  |
+|     21      | WRITE COMPLETED                                  |
+|     22      | WRITE ERROR                                      |
++-------------+--------------------------------------------------+
+
+[*1]:When the "SysEx Transmit" parameter is set to "ON", the message is
+     transmitted whenever a Program Change occurs.
+[*2]:When the "SysEx Transmit" parameter is set to "ON", the message is
+     transmitted whenever a parameter is changed.
+2.RECOGNIZED RECEIVE DATA
+
+2-1 CHANNEL MESSAGES
++--------+---------+-------------+--------------------------------------+
+| Status | Second  |   Third     |           Description                |
+| [Hex]  | [H] [D] | [H]   [D]   |                                      |
++--------+---------+-------------+--------------------------------------+
+|   8n   | kk (kk) | vv    (vv)  | Note Off    vv=0~127                 |
+|   9n   | kk (kk) | 00    (00)  | Note Off                             |
+|   9n   | kk (kk) | vv    (vv)  | Note On     vv=1~127                 |
+|   Bn   | 00 (00) | mm    (mm)  | Program Bank Select(MSB)             |
+|   Bn   | 01 (01) | vv    (vv)  | Pitch Modulation Depth               |
+|   Bn   | 02 (02) | vv    (vv)  | Breath Control Depth                 |
+|   Bn   | 04 (04) | vv    (vv)  | Foot Control                         |
+|   Bn   | 05 (05) | vv    (vv)  | Portamento Time                      |
+|   Bn   | 06 (06) | vv    (vv)  | Data Entry(MSB)                  [*1]|
+|   Bn   | 07 (07) | vv    (vv)  | Volume                               |
+|   Bn   | 09 (09) | vv    (vv)  | Arpeggio Resolution                  |
+|   Bn   | 0A (10) | vv    (vv)  | Panpot                               |
+|   Bn   | 0B (11) | vv    (vv)  | Expression                           |
+|   Bn   | 0E (14) | vv    (vv)  | Arpeggio Gate                        |
+|   Bn   | 0F (15) | vv    (vv)  | Arpeggio Velocity                    |
+|   Bn   | 10 (16) | vv    (vv)  | X-Y Pad (X)                          |
+|   Bn   | 11 (17) | vv    (vv)  | X-Y Pad (Y)                          |
+|   Bn   | 13 (18) | vv    (vv)  | Mono SW                              |
+|   Bn   | 13 (19) | vv    (vv)  | Knob1                                |
+|   Bn   | 14 (20) | vv    (vv)  | Knob2                                |
+|   Bn   | 15 (21) | vv    (vv)  | Knob3                                |
+|   Bn   | 16 (22) | vv    (vv)  | Knob4                                |
+|   Bn   | 17 (23) | vv    (vv)  | Knob5                                |
+|   Bn   | 18 (24) | vv    (vv)  | Filter1 Attack                       |
+|   Bn   | 19 (25) | vv    (vv)  | Filter1 Decay                        |
+|   Bn   | 1A (26) | vv    (vv)  | Filter1 Sustain                      |
+|   Bn   | 1B (27) | vv    (vv)  | Filter1 Release                      |
+|   Bn   | 1C (28) | vv    (vv)  | Filter2 Attack                       |
+|   Bn   | 1D (29) | vv    (vv)  | Filter2 Decay                        |
+|   Bn   | 1E (30) | vv    (vv)  | Filter2 Sustain                      |
+|   Bn   | 1F (31) | vv    (vv)  | Filter2 Release                      |
+|   Bn   | 20 (32) | bb    (bb)  | Program Bank Select(LSB)             |
+|   Bn   | 40 (64) | vv    (vv)  | Sustain Off/On                       |
+|   Bn   | 41 (65) | vv    (vv)  | Portamento Off/On                    |
+|   Bn   | 42 (66) | vv    (vv)  | Sostenuto Off/On                     |
+|   Bn   | 4C (75) | vv    (vv)  | Unison SW                            |
+|   Bn   | 4C (76) | vv    (vv)  | Amp Attack                           |
+|   Bn   | 4D (77) | vv    (vv)  | Amp Decay                            |
+|   Bn   | 4E (78) | vv    (vv)  | Amp Sustain                          |
+|   Bn   | 4F (79) | vv    (vv)  | Amp Release                          |
+|   Bn   | 50 (80) | vv    (vv)  | SW1 Off/On                           |
+|   Bn   | 51 (81) | vv    (vv)  | SW2 Off/On                           |
+|   Bn   | 52 (82) | vv    (vv)  | FootSW Off/On                        |
+|   Bn   | 53 (83) | vv    (vv)  | MixerSW                          [*2]|
+|   Bn   | 55 (85) | vv    (vv)  | Filter1 Cutoff                       |
+|   Bn   | 56 (86) | vv    (vv)  | Filter1 Resonance                    |
+|   Bn   | 57 (87) | vv    (vv)  | Filter1 EG Int.                      |
+|   Bn   | 58 (88) | vv    (vv)  | Filter2 Cutoff                       |
+|   Bn   | 59 (89) | vv    (vv)  | Filter2 Resonance                    |
+|   Bn   | 5A (90) | vv    (vv)  | Filter2 EG Int.                      |
+|   Bn   | 5B (91) | vv    (vv)  | Effect Send                          |
+|   Bn   | 5C (92) | vv    (vv)  | MasterFx Off/On                      |
+|   Bn   | 5E (94) | vv    (vv)  | Effect1 Off/On                       |
+|   Bn   | 5F (95) | vv    (vv)  | Effect2 Off/On                       |
+|   Bn   | 60 (96) | xx    (xx)  | Data Increment                   [*1]|
+|   Bn   | 61 (97) | xx    (xx)  | Data Decrement                   [*1]|
+|   Bn   | 62 (98) | nl    (nl)  | NRPN LSB                         [*1]|
+|   Bn   | 63 (99) | nm    (nm)  | NRPN MSB                         [*1]|
+|   Bn   | 78(120) | 00    (0)   | All Sound Off                        |
+|   Bn   | 79(121) | 00    (0)   | Reset All Controller                 |
+|   Bn   | 7A(122) |00/7F (0/127)| Local Control Off/On                 |
+|   Bn   | 7B(123) | 00    (0)   | All Note Off                         |
+|   Bn   | 7C(124) | 00    (0)   | Omni Mode Off                        |
+|   Bn   | 7D(125) | 00    (0)   | Omni Mode On                         |
+|   Bn   | cc (cc) | vv    (vv)  | Control Data  cc=00~101              |
+|   Cn   | pp (pp) | --     --   | Program Change                       |
+|   Dn   | vv (vv) | --     --   | Channel Pressure (After Touch)       |
+|   En   | bb (bb) | bb    (bb)  | Pitch Bender Change                  |
++--------+---------+-------------+--------------------------------------+
+
+ n : MIDI Channel No.(0~15)
+ vv: Value
+
+[*1]:Non Registered Parameter Number
++---------+-----------------------------+---------------------------------+
+| MSB LSB |       Parameter             |     Data Entry(MSB) Value       |
+| [H] [H] |                             |                                 |
++---------+-----------------------------+---------------------------------+
+| 00  01  | Arpeggio Pattern Select     | 00~13:Int.Pat, 20h~33h:Card Pat |
+| 00  02  | Arpeggio On/Off             | 00~3F:OFF, 40h~7Fh:ON           |
+| 00  03  | Arpeggio Octaves            | 00~03:1~4 Oct.                  |
+| 00  04  | Arpeggiator Latch On/Off    | 00~3F:OFF, 40h~7Fh:ON           |
+| 00  05  | Arpeggiator Key Sync On/Off | 00~3F:OFF, 40h~7Fh:ON           |
+| 00  06  | Arpeggio KBD On/Off         | 00~3F:OFF, 40h~7Fh:ON           |
++---------+-----------------------------+---------------------------------+
+
+  All these parameters can be changed by "Data Increment" and "Data Decrement".
+
+[*2]:MixerSW
++-----------+---------------------------+
+|    vv     | Description               |
++-----------+---------------------------+
+| 0--- x--- | OSC1 SW                   |
+| 0--x ---- | OSC2 SW                   |
+| 0-x- ---- | Sub OSC SW                |
+| 0x-- ---- | Noise Generator SW        |
++-----------+---------------------------+
+
+
+2-2 SYSTEM REALTIME MESSAGES
++-----------+-----------------------------------------------+
+| Status[H] | Description                                   |
++-----------+-----------------------------------------------+
+|    F8     | Timing Clock                              [*1]|
+|    FA     | Start                                     [*2]|
+|    FB     | Continue                                  [*2]|
+|    FC     | Stop                                      [*2]|
+|    FE     | Active Sensing                                |
++-----------+-----------------------------------------------+
+
+[*1]:This message is recognized when the "Clock Source" is 
+     set to "EXTERNAL".
+
+[*2]:These messages are recognized when the "Clock Source" is 
+     set to "EXTERNAL" and the "Realtime Command" is set to
+     "ENABLE".
+
+
+2-3 UNIVERSAL SYSTEM EXCLUSIVE MESSAGE ( NON REALTIME )
+
+  DEVICE INQUIRY MESSAGE REQUEST
++---------+----------------------+
+| Byte[H] |    Description       |
++---------+----------------------+
+|   F0    | Exclusive Status     |
+|   7E    | Non Realtime Message |
+|   0g    | MIDI Channel         |
+|   06    | Inquiry Message      |
+|   01    | Inquiry Request      |
+|   F7    | END OF EXCLUSIVE     |
++---------+----------------------+
+
+
+2-4 SYSTEM EXCLUSIVE MESSAGE
++-------------+-----------------------------------------------------------+
+| Function ID |               Function                                    |
+|    [Hex]    |                                                           |
++-------------+-----------------------------------------------------------+
+|     10      | CURRENT PROGRAM DATA DUMP REQUEST                         |
+|     1C      | PROGRAM DATA DUMP REQUEST                                 |
+|     19      | CURRENT MULTI SETUP DATA DUMP REQUEST                     |
+|     1D      | MULTI SETUP DATA DUMP REQUEST                             |
+|     36      | CURRENT ARPEGGIO PATTERN DATA DUMP REQUEST                |
+|     34      | ARPEGGIO PATTERN DATA DUMP REQUEST                        |
+|     0E      | GLOBAL/MIDI DATA DUMP REQUEST                             |
+|     0F      | ALL DATA(PROGRAM,MULTI,PATTERN,GLOBAL,MIDI) DUMP REQUEST  |
+|     11      | PROGRAM WRITE REQUEST                                     |
+|     1A      | MULTI SETUP WRITE REQUEST                                 |
+|     37      | ARPEGGIO PATTERN WRITE REQUEST                            |
+|     40      | CURRENT PROGRAM DATA DUMP                                 |
+|     4C      | PROGRAM DATA DUMP                                         |
+|     49      | CURRENT MULTI SETUP DATA DUMP                             |
+|     4D      | MULTI SETUP DATA DUMP                                     |
+|     6B      | CURRENT ARPEGGIO PATTERN DATA DUMP                        |
+|     69      | ARPEGGIO PATTERN DATA DUMP                                |
+|     51      | GLOBAL/MIDI DATA DUMP                                     |
+|     50      | ALL DATA(PROGRAM,MULTI,PATTERN,GLOBAL,MIDI) DUMP          |
+|     41      | PARAMETER CHANGE                                          |
++-------------+-----------------------------------------------------------+
+
+   When the "SysEx Receive" parameter is set to "ENABLE", these messages are 
+   recognized.
+
+MIDI EXCLUSIVE FORMAT   (R:Receive, T:Transmit)
+
+(1) CURRENT PROGRAM DATA DUMP REQUEST                              R
++----------------+--------------------------------------------------+
+|     Byte       |             Description                          |
++----------------+--------------------------------------------------+
+| F0,42,3g,46    | EXCLUSIVE HEADER                                 |
+| 0001 0000 (10) | CURRENT PROGRAM DATA DUMP REQUEST      10H       |
+| 0000 0000 (00) |                                                  |
+| 1111 0111 (F7) | EOX                                              |
++----------------+--------------------------------------------------+
+
+ When this message is received, the CURRENT PROGRAM DUMP(Function:40h) 
+ message will be transmitted.
+
+
+(2) PROGRAM DATA DUMP REQUEST                                      R
++----------------+--------------------------------------------------+
+|     Byte       |             Description                          |
++----------------+--------------------------------------------------+
+| F0,42,3g,46    | EXCLUSIVE HEADER                                 |
+| 0001 1100 (1C) | PROGRAM DATA DUMP REQUEST              1CH       |
+| 00uu 000b (ub) | Unit(00:Prog/01:Bank/10:All),Bank(0:A/1:B)       |
+| 0ppp pppp (pp) | Prog No.(Ignored when Bank or All dump.)         |
+| 0000 0000 (00) |                                                  |
+| 1111 0111 (F7) | EOX                                              |
++----------------+--------------------------------------------------+
+
+ When this message is received, the PROGRAM DUMP(Function:4Ch) message
+ will be transmitted.
+
+
+(3) CURRENT MULTI SETUP DATA DUMP REQUEST                          R
++----------------+--------------------------------------------------+
+|     Byte       |             Description                          |
++----------------+--------------------------------------------------+
+| F0,42,3g,46    | EXCLUSIVE HEADER                                 |
+| 0001 1001 (19) | CURRENT MULTI SETUP DATA DUMP REQUEST  19H       |
+| 0000 0000 (00) |                                                  |
+| 1111 0111 (F7) | EOX                                              |
++----------------+--------------------------------------------------+
+
+ When this message is received, the CURRENT MULTI SETUP DATA DUMP
+ (Function:49h) message will be transmitted.
+
+
+(4) MULTI SETUP DATA DUMP REQUEST                                  R
++----------------+--------------------------------------------------+
+|     Byte       |             Description                          |
++----------------+--------------------------------------------------+
+| F0,42,3g,46    | EXCLUSIVE HEADER                                 |
+| 0001 1101 (1D) | MULTI SETUP DATA DUMP REQUEST          1DH       |
+| 00uu 000b (ub) | Unit(00:Multi/01:Bank/10:All),Bank(0:A/1:B)      |
+| 0mmm mmmm (mm) | Multi Setup No.(Ignored when Bank or All dump.)  |
+| 0000 0000 (00) |                                                  |
+| 1111 0111 (F7) | EOX                                              |
++----------------+--------------------------------------------------+
+
+ When this message is received, the MULTI SETUP DATA DUMP(Function:4Dh) 
+ message will be transmitted.
+
+
+(5) CURRENT ARPEGGIO PATTERN DUMP REQUEST                          R
++----------------+--------------------------------------------------+
+|     Byte       |             Description                          |
++----------------+--------------------------------------------------+
+| F0,42,3g,46    | EXCLUSIVE HEADER                                 |
+| 0011 0110 (36) | CURRENT ARPEGGIO PATTERN DUMP REQUEST  36H       |
+| 0000 0000 (00) |                                                  |
+| 1111 0111 (F7) | EOX                                              |
++----------------+--------------------------------------------------+
+
+ When this message is received, the CURRENT ARPEGGIO PATTERN DUMP
+ (Function:6Bh) message will be transmitted.
+
+
+(6) ARPEGGIO PATTERN DATA DUMP REQUEST                             R
++----------------+--------------------------------------------------+
+|     Byte       |             Description                          |
++----------------+--------------------------------------------------+
+| F0,42,3g,46    | EXCLUSIVE HEADER                                 |
+| 0011 0100 (34) | ARPEGGIO PATTERN DATA DUMP REQUEST     34H       |
+| 000u 0000 (u0) | Unit(0:Pattern/1:All)                            |
+| 0ppp pppp (pp) | Pattern No.(0~19)                                |
+| 1111 0111 (F7) | EOX                                              |
++----------------+--------------------------------------------------+
+
+ When this message is received, the ARPEGGIO PATTERN DUMP(Function:69h)
+ message will be transmitted.
+
+
+(7) GLOBAL/MIDI DATA DUMP REQUEST                                  R
++----------------+--------------------------------------------------+
+|     Byte       |             Description                          |
++----------------+--------------------------------------------------+
+| F0,42,3g,46    | EXCLUSIVE HEADER                                 |
+| 0000 1110 (0E) | GLOBAL/MIDI DATA DUMP REQUEST          0EH       |
+| 0000 000g (0g) | 0:Global/1:MIDI                                  |
+| 1111 0111 (F7) | EOX                                              |
++----------------+--------------------------------------------------+
+
+ When this message is received, the GLOBALS DATA DUMP(Function:51h)
+ message will be transmitted.
+
+
+(8) ALL DATA DUMP REQUEST                                          R
++----------------+--------------------------------------------------+
+|     Byte       |             Description                          |
++----------------+--------------------------------------------------+
+| F0,42,3g,46    | EXCLUSIVE HEADER                                 |
+| 0000 1111 (0F) | ALL DATA DUMP REQ                      0FH       |
+| 0000 0000 (00) |                                                  |
+| 1111 0111 (F7) | EOX                                              |
++----------------+--------------------------------------------------+
+
+ When this message is received, the ALL DATA DUMP(Function:50h) message
+ will be transmitted.
+
+
+(9) PROGRAM WRITE REQUEST                                          R
++----------------+--------------------------------------------------+
+|     Byte       |            Description                           |
++----------------+--------------------------------------------------+
+| F0,42,3g,46    | EXCLUSIVE HEADER                                 |
+| 0001 0001 (11) | PROGRAM WRITE REQUEST                  11H       |
+| 0000 000b (0b) | Destination Program Bank(0:A/1:B)                |
+| 0ppp pppp (pp) | Destination Program No.(0~127)                   |
+| 1111 0111 (F7) | EOX                                              |
++----------------+--------------------------------------------------+
+
+ When this message is received, a WRITE COMPLETED(Function:21h) message
+ or a WRITE ERROR(Function:22h) message will be transmitted.
+
+
+(10) MULTI SETUP WRITE REQUEST                                     R
++----------------+--------------------------------------------------+
+|     Byte       |            Description                           |
++----------------+--------------------------------------------------+
+| F0,42,3g,46    | EXCLUSIVE HEADER                                 |
+| 0001 1010 (1A) | MULTI SETUP WRITE REQUEST              1AH       |
+| 0000 0000 (00) |                                                  |
+| 000m mmmm (mm) | Destination Multi No.(0~31)                      |
+| 1111 0111 (F7) | EOX                                              |
++----------------+--------------------------------------------------+
+
+ When this message is received, a WRITE COMPLETED(Function:21h) message
+ or a WRITE ERROR(Function:22h) message will be transmitted.
+
+
+(11) ARPEGGIO PATTERN WRITE REQUEST                                R
++----------------+--------------------------------------------------+
+|     Byte       |            Description                           |
++----------------+--------------------------------------------------+
+| F0,42,3g,46    | EXCLUSIVE HEADER                                 |
+| 0011 0111 (37) | ARPEGGIO PATTERN WRITE REQUEST         37H       |
+| 0000 0000 (00) |                                                  |
+| 0ppp pppp (pp) | Destination Pattern No.(0~19)                    |
+| 1111 0111 (F7) | EOX                                              |
++----------------+--------------------------------------------------+
+
+ When this message is received, a WRITE COMPLETED(Function:21h) message
+ or a WRITE ERROR(Function:22h) message will be transmitted.
+
+
+(12) CURRENT PROGRAM DATA DUMP                                   R/T
++----------------+--------------------------------------------------+
+|     Byte       |             Description                          |
++----------------+--------------------------------------------------+
+| F0,42,3g,46    | EXCLUSIVE HEADER                                 |
+| 0100 0000 (40) | CURRENT PROGRAM DATA DUMP              40H       |
+| 0000 0001 (01) |                                                  |
+| 0ddd dddd (dd) | Data                                         [*1]|
+|     :          |  :                                               |
+| 1111 0111 (F7) | EOX                                              |
++----------------+--------------------------------------------------+
+
+ When this message is received, a DATA LOAD COMPLETED(Function:23h) 
+ message or a DATA LOAD ERROR(Function:24h) message will be transmitted.
+
+
+(13) PROGRAM DATA DUMP                                           R/T
++----------------+--------------------------------------------------+
+|     Byte       |             Description                          |
++----------------+--------------------------------------------------+
+| F0,42,3g,46    | EXCLUSIVE HEADER                                 |
+| 0100 1100 (4C) | PROGRAM DATA DUMP                      4CH       |
+| 00uu 000b (ub) | Unit(00:Prog/01:Bank/10:All),Bank(0:A/1:B)       |
+| 0ppp pppp (pp) | Program No.(Ignored when Bank or All dump.)      |
+| 0000 0000 (00) |                                                  |
+| 0ddd dddd (dd) | Data                                         [*1]|
+|     :          |  :                                               |
+| 1111 0111 (F7) | EOX                                              |
++----------------+--------------------------------------------------+
+
+ When this message is received, a DATA LOAD COMPLETED(Function:23h)
+ message or a DATA LOAD ERROR(Function:24h) message will be transmitted.
+
+
+(14) CURRENT MULTI SETUP DATA DUMP                               R/T
++----------------+--------------------------------------------------+
+|     Byte       |             Description                          |
++----------------+--------------------------------------------------+
+| F0,42,3g,46    | EXCLUSIVE HEADER                                 |
+| 0100 1001 (49) | CURRENT MULTI SETUP DATA DUMP          49H       |
+| 0000 0000 (00) |                                                  |
+| 0ddd dddd (dd) | Data                                         [*1]|
+|     :          |  :                                               |
+| 1111 0111 (F7) | EOX                                              |
++----------------+--------------------------------------------------+
+
+ When this message is received, a DATA LOAD COMPLETED(Function:23h)
+ message or a DATA LOAD ERROR(Function:24h) message will be transmitted.
+
+
+(15) MULTI SETUP DATA DUMP                                       R/T
++----------------+--------------------------------------------------+
+|     Byte       |             Description                          |
++----------------+--------------------------------------------------+
+| F0,42,3g,46    | EXCLUSIVE HEADER                                 |
+| 0100 1101 (4D) | MULTI SETUP DATA DUMP                  4DH       |
+| 0000 0000 (00) |                                                  |
+| 00uu 000b (ub) | Unit(00:Multi/01:Bank/10:All),Bank(0:A/1:B)      |
+| 000m mmmm (mm) | Multi Setup No.(Ignored when Bank or All dump.)  |
+| 0000 0000 (00) |                                                  |
+| 0ddd dddd (dd) | Data                                         [*1]|
+|     :          |  :                                               |
+| 1111 0111 (F7) | EOX                                              |
++----------------+--------------------------------------------------+
+
+ When this message is received, a DATA LOAD COMPLETED(Function:23h)
+ message or a DATA LOAD ERROR(Function:24h) message will be transmitted.
+
+
+(16) CURRENT ARPEGGIO PATTERN DUMP                               R/T
++----------------+--------------------------------------------------+
+|     Byte       |             Description                          |
++----------------+--------------------------------------------------+
+| F0,42,3g,46    | EXCLUSIVE HEADER                                 |
+| 0110 1011 (6B) | CURRENT ARPEGGIO PATTERN DUMP          6BH       |
+| 0000 0000 (00) |                                                  |
+| 0ddd dddd (dd) | Data                                         [*1]|
+|     :          |  :                                               |
+| 1111 0111 (F7) | EOX                                              |
++----------------+--------------------------------------------------+
+
+ When this message is received, a DATA LOAD COMPLETED(Function:23h)
+ message or a DATA LOAD ERROR(Function:24h) message will be transmitted.
+
+
+(17) ARPEGGIO PATTERN DATA DUMP                                  R/T
++----------------+--------------------------------------------------+
+|     Byte       |             Description                          |
++----------------+--------------------------------------------------+
+| F0,42,3g,46    | EXCLUSIVE HEADER                                 |
+| 0110 1001 (69) | ARPEGGIO PATTERN DATA DUMP             69H       |
+| 000u 0000 (u0) | Unit(0:Pattern/1:All)                            |
+| 0ppp pppp (pp) | Pattern No.(0~19)                                |
+| 0ddd dddd (dd) | Data                                         [*1]|
+|     :          |  :                                               |
+| 1111 0111 (F7) | EOX                                              |
++----------------+--------------------------------------------------+
+
+ When this message is received, a DATA LOAD COMPLETED(Function:23h)
+ message or a DATA LOAD ERROR(Function:24h) message will be transmitted.
+
+
+(18) GLOBAL/MIDI DATA DUMP                                       R/T
++----------------+--------------------------------------------------+
+|     Byte       |             Description                          |
++----------------+--------------------------------------------------+
+| F0,42,3g,46    | EXCLUSIVE HEADER                                 |
+| 0101 0001 (51) | GLOBAL/MIDI DATA DUMP                  51H       |
+| 0000 000g (0g) | 0:Global/1:MIDI                                  |
+| 0ddd dddd (dd) | Data                                         [*1]|
+|     :          |  :                                               |
+| 1111 0111 (F7) | EOX                                              |
++----------------+--------------------------------------------------+
+
+ When this message is received, a DATA LOAD COMPLETED(Function:23h)
+ message or a DATA LOAD ERROR(Function:24h) message will be transmitted.
+
+
+(19) ALL DATA DUMP                                               R/T
++----------------+--------------------------------------------------+
+|     Byte       |             Description                          |
++----------------+--------------------------------------------------+
+| F0,42,3g,46    | EXCLUSIVE HEADER                                 |
+| 0101 0000 (50) | ALL DATA DUMP                          50H       |
+| 0000 0000 (00) |                                                  |
+| 0000 0000 (00) |                                                  |
+| 0ddd dddd (dd) | Data                                         [*1]|
+|     :          |  :                                               |
+| 1111 0111 (F7) | EOX                                              |
++----------------+--------------------------------------------------+
+
+ When this message is received, a DATA LOAD COMPLETED(Function:23h)
+ message or a DATA LOAD ERROR(Function:24h) message will be transmitted.
+ The data are combined in the order that Program, Multi, Pattern 
+ and Global/MIDI.
+
+
+(20) PARAMETER CHANGE                                            R/T
++----------------+--------------------------------------------------+
+|     Byte       |             Description                          |
++----------------+--------------------------------------------------+
+| F0,42,3g,46    | EXCLUSIVE HEADER                                 |
+| 0100 0001 (41) | PARAMETER CHANGE                       41H       |
+| 0000 00mm (0m) | Group(00:Global&MIDI/01:Prog/10:Pat/11:Multi)    |
+| 0ppp pppp (pp) | Parameter ID (LSB)                           [*2]|
+| 0ppp pppp (pp) | Parameter ID (MSB)                           [*2]|
+| 0vvv vvvv (vv) | Value    (LSB bit6~0)                            |
+| 0vvv vvvv (vv) | Value    (MSB bit13~7)                           |
+| 1111 0111 (F7) | EOX                                              |
++----------------+--------------------------------------------------+
+
+ When this message is received, a DATA LOAD COMPLETED(Function:23h)
+ message or a DATA LOAD ERROR(Function:24h) message will be transmitted.
+
+
+(21) DATA FORMAT ERROR                                             T
++----------------+--------------------------------------------------+
+|     Byte       |             Description                          |
++----------------+--------------------------------------------------+
+| F0,42,3g,46    | EXCLUSIVE HEADER                                 |
+| 0010 0110 (26) | DATA FORMAT ERROR                      26H       |
+| 1111 0111 (F7) | EOX                                              |
++----------------+--------------------------------------------------+
+
+
+(22) DATA LOAD COMPLETED                                           T
++----------------+--------------------------------------------------+
+|     Byte       |             Description                          |
++----------------+--------------------------------------------------+
+| F0,42,3g,46    | EXCLUSIVE HEADER                                 |
+| 0010 0011 (23) | DATA LOAD COMPLETED                    23H       |
+| 1111 0111 (F7) | EOX                                              |
++----------------+--------------------------------------------------+
+
+
+(23) DATA LOAD ERROR                                               T
++----------------+--------------------------------------------------+
+|     Byte       |             Description                          |
++----------------+--------------------------------------------------+
+| F0,42,3g,46    | EXCLUSIVE HEADER                                 |
+| 0010 0100 (24) | DATA LOAD ERROR                        24H       |
+| 0000 0000 (00) |                                                  |
+| 1111 0111 (F7) | EOX                                              |
++----------------+--------------------------------------------------+
+
+
+(24) WRITE COMPLETED                                               T
++----------------+--------------------------------------------------+
+|     Byte       |             Description                          |
++----------------+--------------------------------------------------+
+| F0,42,3g,46    | EXCLUSIVE HEADER                                 |
+| 0010 0001 (21) | WRITE COMPLETED                        21H       |
+| 1111 0111 (F7) | EOX                                              |
++----------------+--------------------------------------------------+
+
+
+(25) WRITE ERROR                                                   T
++----------------+--------------------------------------------------+
+|     Byte       |             Description                          |
++----------------+--------------------------------------------------+
+| F0,42,3g,46    | EXCLUSIVE HEADER                                 |
+| 0010 0010 (22) | WRITE ERROR                            22H       |
+| 0000 0000 (00) |                                                  |
+| 1111 0111 (F7) | EOX                                              |
++----------------+--------------------------------------------------+
+
+[*1]:The dump data conversion
+
+    DATA ( 1set = 8bit x 7Byte )
+    b7     ~      b0   b7     ~      b0   b7   ~~    b0   b7     ~      b0
+   +-+-+-+-+-+-+-+-+  +-+-+-+-+-+-+-+-+  +-+-+-~~-+-+-+  +-+-+-+-+-+-+-+-+
+   | | | | | | | | |  | | | | | | | | |  | | |    | | |  | | | | | | | | |
+   +-+-+-+-+-+-+-+-+  +-+-+-+-+-+-+-+-+  +-+-+-~~-+-+-+  +-+-+-+-+-+-+-+-+
+         7n+0               7n+1          7n+2 ~~ 7n+5         7n+6
+
+    MIDI DATA ( 1set = 7bit x 8Byte )
+      b7b7b7b7b7b7b7     b6    ~     b0     b6 ~~    b0     b6    ~     b0
+   +-+-+-+-+-+-+-+-+  +-+-+-+-+-+-+-+-+  +-+-+-~~-+-+-+  +-+-+-+-+-+-+-+-+
+   |0| | | | | | | |  |0| | | | | | | |  |0| |    | | |  |0| | | | | | | |
+   +-+-+-+-+-+-+-+-+  +-+-+-+-+-+-+-+-+  +-+-+-~~-+-+-+  +-+-+-+-+-+-+-+-+
+   7n+6,5,4,3,2,1,0         7n+0          7n+1 ~~ 7n+5         7n+6
+
+
+[*2]:See the parameter lists.
+
