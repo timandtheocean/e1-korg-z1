@@ -1,11 +1,10 @@
 # design a preset for the Korg Z1 MOSS synthesizer for the E1 (electraone)
-Debian Linux and VS Code; Lua 5.4 and `luacheck` for development. Z1 hardware tests use `amidi` via Electra One Port 1; preset/script transfers and E1 Lua tests use `electraone-cli` on the CTRL port. `sendmidi` and `receivemidi` were not used for these tests.
+Debian Linux and VS Code and agy ; Lua 5.4 and `luacheck` for development. Z1 hardware tests use `amidi` via Electra One Port 1; preset/script transfers and E1 Lua tests use `electraone-cli` on the CTRL port. `sendmidi` and `receivemidi` were not used for these tests.
 
 [https://docs.electra.one/developers]
 [https://docs.electra.one/developers/midiimplementation.html] 
 
 the json preset format: [https://docs.electra.one/developers/presetformat.html]
-
 
 A preset is text. preset.json is the preset, main.lua is its script, router.lua is the router's, and the rest of the slot is a few more JSON files. There is no build, no binary, no project database: a diff is readable, a change is a file write, and git handles the history.
 
