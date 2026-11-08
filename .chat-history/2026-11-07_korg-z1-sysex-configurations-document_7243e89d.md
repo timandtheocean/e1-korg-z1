@@ -4,7 +4,7 @@
 |---|---|
 | **Created** | 2026-11-07 00:23:32 |
 | **Last Message** | 2026-11-07 00:23:32 |
-| **Model** | Gemini 4 Argon |
+| **Model** | Auto |
 | **Mode** | agent |
 | **User** | Unknown |
 | **Session ID** | `7243e89d-a6e6-455d-8e14-52be97567b4a` |
@@ -69,7 +69,7 @@ I'm also cataloging the current program dump, multi request/dump (correcting cod
 > *[Code edit applied]*
 
 <details>
-<summary>💭 Thinking</summary>
+<summary>💭 Thinking — Reviewed 7-bit encoding diagram</summary>
 
 Let me double-check the 7-bit encoding diagram—the first MIDI byte lists bits 6 through 0 mapping to b7 of each source byte from byte6 down to byte0, confirming my reading is correct.
 
@@ -348,8 +348,6 @@ The Toraiz AS-1's FX-dependent controls using setName/setVisible give me a solid
 
 > **🔧 ✓ Asking 5 questions (E1 model, Go scope now, E1 workflow, Layout, Z1 channel)**
 
-> **🔧 ✓ Asking 5 questions (E1 model, Go scope now, E1 workflow, Layout, Z1 channel)**
-
 <details>
 <summary>💭 Thinking — Narrowed scope to focus on E1 SysEx workflow</summary>
 
@@ -369,8 +367,6 @@ I'm figuring out the upload sequence for slot, preset, and lua files, then reloa
 Now I'm wrestling with ambiguity around which modulator parameters to target—there's uncertainty between the three common pitch mod sources versus all model-specific mod source params, so I should ask a clarifying question recommending both approaches: handling in-model mod sources dynamically while treating the three common pitch mod sources as fixed controls.
 
 </details>
-
-> **🔧 ✓ Asking 2 questions (Mod sources, Initial sync)**
 
 > **🔧 ✓ Asking 2 questions (Mod sources, Initial sync)**
 
@@ -744,13 +740,6 @@ cmake ..
 cmake\_status=$?
 echo "CMAK...`**
 
-> **🔧 ✓ Tool call**
-
-> **🔧 ✓ Running ` cd /home/timbos/src/electraone-cli/build
-cmake ..
-cmake\_status=$?
-echo "CMAK...`**
-
 ---
 
 ## User
@@ -855,8 +844,6 @@ On Debian, rpmbuild comes from the `rpm` package, or I could just skip RPM entir
 
 > **🔧 ✓ Replacing 2 lines with 6 lines in [](file:///home/timbos/src/electraone-cli/CMakeLists.txt)**
 
-> **🔧 ✓ Replacing 2 lines with 6 lines in [](file:///home/timbos/src/electraone-cli/CMakeLists.txt)**
-
 ---
 
 ## User
@@ -937,71 +924,6 @@ Since our static library statically links rtmidi and exposes it publicly, consum
 
 > **🔧 ✓ Running ` grep -iE '^\(RtMidi\_DIR|CLI11\_DIR\)' build/CMakeCache.txt; dpkg -L librtmidi-d...`**
 
-> **🔧 ✓ Running ` grep -iE '^\(RtMidi\_DIR|CLI11\_DIR\)' build/CMakeCache.txt; dpkg -L librtmidi-d...`**
-
-> **🔧 ✓ Reading [](file:///home/timbos/.config/Code/User/workspaceStorage/407c531e5f6f4b0fdcbba90069a34a40/GitHub.copilot-chat/chat-session-resources/7243e89d-a6e6-455d-8e14-52be97567b4a/toolu_vrtx_01SoyhYv5BKxjxqtg5NGeiNw__vscode-1794011010620/content.txt#1-1), lines 1 to 200**
-
-> **🔧 ✓ Reading [](file:///home/timbos/.config/Code/User/workspaceStorage/407c531e5f6f4b0fdcbba90069a34a40/GitHub.copilot-chat/chat-session-resources/7243e89d-a6e6-455d-8e14-52be97567b4a/toolu_vrtx_01SoyhYv5BKxjxqtg5NGeiNw__vscode-1794011010620/content.txt#200-200), lines 200 to 216**
-
-<details>
-<summary>💭 Thinking — Analyzed Debian librtmidi-dev packaging issue</summary>
-
-The real issue is that Debian's librtmidi-dev only ships pkg-config files, not a CMake config, so find_package fails and FetchContent pulls in RtMidi, ArduinoJson, and doctest, whose install rules then leak into the package. I need a portable fix that falls back to pkg-config for locating system RtMidi.
-
-For dependencies, the CLI binary links the shared library so SHLIBDEPS should auto-detect librtmidi6, but static consumers of my archive still need librtmidi-dev added explicitly to DEPENDS — though I'm leaning toward keeping it simple rather than splitting into runtime/dev packages. To stop third-party install rules from polluting the package, I'm tagging my own install() calls with a dedicated component and scoping CPACK_INSTALL_CMAKE_PROJECTS to just that component, which is portable across CMake 3.16 and all generators.
-
-ArduinoJson and doctest are header-only/test-only and get naturally excluded by the component restriction, though a plain `cmake --install` without component filtering would still pull them in, which is fine. I also note that the fetched static RtMidi fallback (used on Windows/macOS) won't be installed under this component-scoped approach, but since Linux packaging relies on the system rtmidi package anyway, that's not an issue. A sha256-based overlap check isn't viable since dpkg rejects any file conflict regardless of content, so proper dependency declarations are the right fix, and for RPM, autoreq should handle shared library requirements like libjack and libasound automatically.
-
-For the RtMidi detection block, I'm adding logic to first try find_package in config mode, then fall back to pkg-config if that fails.
-
-I set the target name based on which path found rtmidi: the config target, the pkg-config target, or the fetched one, keeping RtMidi::rtmidi for the official export name. Now I need to check whether the header should be included as "RtMidi.h" or with a path prefix, since system install, pkg-config, and fetched sources may each expose it differently.
-
-For packaging, I'm adding install COMPONENT tags for electraone to the install calls and setting up CPack install projects and Debian packaging variables for this component.
-
-I should set CPACK_DEBIAN_PACKAGE_DEPENDS to librtmidi-dev while letting SHLIBDEPS pick up runtime deps like librtmidi6, since dpkg-dev is already enabled for that. Now I want to verify the rtmidi.pc file and its include conventions.
-
-</details>
-
-> **🔧 ✓ Running ` cat /usr/lib/x86\_64-linux-gnu/pkgconfig/rtmidi.pc; grep -rn 'include.\*RtMidi...`**
-
-> **🔧 ✓ Running ` cat /usr/lib/x86\_64-linux-gnu/pkgconfig/rtmidi.pc; grep -rn 'include.\*RtMidi...`**
-
-<details>
-<summary>💭 Thinking — Reviewed CMakeLists.txt and confirmed library linking worked</summary>
-
-Good, the include path and library linking work fine since the linker finds the library via default system paths. Now I need to go back and edit CMakeLists.txt, so let me re-read the current top section to get the exact strings right.
-
-</details>
-
-> **🔧 ✓ Reading [](file:///home/timbos/src/electraone-cli/CMakeLists.txt#10-10), lines 10 to 60**
-
-> **🔧 ✓ Searching for regex `install\(|CPACK_GENERATOR|CPACK_DEBIAN_PACKAGE_SHLIBDEPS|CPACK_RPM_PACKAGE_REQUIRES` (`/home/timbos/src/electraone-cli/CMakeLists.txt`)**
-
-> **🔧 ✓ Reading [](file:///home/timbos/src/electraone-cli/CMakeLists.txt#188-188), lines 188 to 230**
-
-> **🔧 ✓ Replacing 17 lines with 36 lines in [](file:///home/timbos/src/electraone-cli/CMakeLists.txt)**
-
-```
-
-> *[Code edit applied]*
-
-```
-Now a fresh build and package to confirm the `.deb` contains only our files:
-
-> **🔧 ✓ Tool call**
-
-> **🔧 ✓ Running ` set \+e
-printf '%s\\n' '=== 1. rm -rf build ==='
-rm -rf build
-printf '%s\\n' '=...`**
-
-> **🔧 ✓ Running ` set \+e
-printf '%s\\n' '=== 1. rm -rf build ==='
-rm -rf build
-printf '%s\\n' '=...`**
-
-> **🔧 ✓ Running ` grep -iE '^\(RtMidi\_DIR|CLI11\_DIR\)' build/CMakeCache.txt; dpkg -L librtmidi-d...`**
-
 > **🔧 ✓ Reading [](file:///home/timbos/.config/Code/User/workspaceStorage/407c531e5f6f4b0fdcbba90069a34a40/GitHub.copilot-chat/chat-session-resources/7243e89d-a6e6-455d-8e14-52be97567b4a/toolu_vrtx_01SoyhYv5BKxjxqtg5NGeiNw__vscode-1794011010620/content.txt#1-1), lines 1 to 200**
 
 > **🔧 ✓ Reading [](file:///home/timbos/.config/Code/User/workspaceStorage/407c531e5f6f4b0fdcbba90069a34a40/GitHub.copilot-chat/chat-session-resources/7243e89d-a6e6-455d-8e14-52be97567b4a/toolu_vrtx_01SoyhYv5BKxjxqtg5NGeiNw__vscode-1794011010620/content.txt#200-200), lines 200 to 216**
@@ -1062,8 +984,6 @@ printf '%s\\n' '=...`**
 Since the subagent didn't return results, I'll just run the search myself with filtering instead.
 
 </details>
-
-> **🔧 ✓ Running ` cd /home/timbos/src/electraone-cli && ls build/\*.deb && dpkg-deb -c build/el...`**
 
 > **🔧 ✓ Running ` cd /home/timbos/src/electraone-cli && ls build/\*.deb && dpkg-deb -c build/el...`**
 
@@ -1171,8 +1091,6 @@ Install rules for the CLI executable should work fine with MinGW linking. Now I 
 
 > **🔧 ✓ Running ` which x86\_64-w64-mingw32-g\+\+-posix x86\_64-w64-mingw32-g\+\+ makensis wine 2>&1...`**
 
-> **🔧 ✓ Running ` which x86\_64-w64-mingw32-g\+\+-posix x86\_64-w64-mingw32-g\+\+ makensis wine 2>&1...`**
-
 > **🔧 ✓ Running ` grep -n -E '\_WIN32|include <|termios|unistd|ioctl' src/commands/terminal.cpp...`**
 
 <details>
@@ -1223,8 +1141,6 @@ Enabling CPACK_NSIS_MODIFY_PATH gives users the option to add the install to PAT
 
 > **🔧 ✓ Running ` rm -rf build-win64 && cmake -S . -B build-win64 -DCMAKE\_TOOLCHAIN\_FILE=cmake...`**
 
-> **🔧 ✓ Running ` rm -rf build-win64 && cmake -S . -B build-win64 -DCMAKE\_TOOLCHAIN\_FILE=cmake...`**
-
 <details>
 <summary>💭 Thinking — Reviewed lines 26-30 and planned source fix</summary>
 
@@ -1235,14 +1151,6 @@ There's a redefinition warning on NOMINMAX since it's defined without a guard �
 > **🔧 ✓ Reading [](file:///home/timbos/src/electraone-cli/src/commands/terminal.cpp)**
 
 > **🔧 ✓ Replacing 3 lines with 5 lines in [](file:///home/timbos/src/electraone-cli/src/commands/terminal.cpp)**
-
-> **🔧 ✓ Running ` cmake --build build-win64 -j 2>&1 | grep -iE 'error|warning' ; file build-wi...`**
-
-```
-
-> *[Code edit applied]*
-
-```
 
 > **🔧 ✓ Running ` cmake --build build-win64 -j 2>&1 | grep -iE 'error|warning' ; file build-wi...`**
 
@@ -1281,20 +1189,6 @@ Now bundle the fetched RtMidi archive for Windows library users, and document th
 > **🔧 ✓ Replacing 1 lines with 5 lines in [](file:///home/timbos/src/electraone-cli/CMakeLists.txt)**
 
 > **🔧 ✓ Replacing 4 lines with 27 lines in [](file:///home/timbos/src/electraone-cli/README.md)**
-
-> **🔧 ✓ Running ` cd /home/timbos/src/electraone-cli/build-win64 && cmake . >/dev/null && cmak...`**
-
-```
-
-> *[Code edit applied]*
-
-```
-
-```
-
-> *[Code edit applied]*
-
-```
 
 > **🔧 ✓ Running ` cd /home/timbos/src/electraone-cli/build-win64 && cmake . >/dev/null && cmak...`**
 
@@ -1358,11 +1252,7 @@ I should update the README's build requirements section to list the exact Debian
 
 > **🔧 ✓ Running ` dpkg -S /usr/bin/x86\_64-w64-mingw32-g\+\+-posix /usr/bin/x86\_64-w64-mingw32-wi...`**
 
-> **🔧 ✓ Running ` dpkg -S /usr/bin/x86\_64-w64-mingw32-g\+\+-posix /usr/bin/x86\_64-w64-mingw32-wi...`**
-
 > **🔧 ✓ Searching for text `Windows package, cross-compiled on Linux` (`/home/timbos/src/electraone-cli/README.md`)**
-
-> **🔧 ✓ Running ` grep -n -E 'Windows package|Unit tests are skipped|\#\#\# Prerequisites per pla...`**
 
 > **🔧 ✓ Running ` grep -n -E 'Windows package|Unit tests are skipped|\#\#\# Prerequisites per pla...`**
 
@@ -1425,8 +1315,6 @@ Building a macOS app via osxcross is technically possible but legally murky sinc
 
 > **🔧 ✓ Running ` cd /home/timbos/src/electraone-cli && ls .github/workflows && grep -n -E 'ru...`**
 
-> **🔧 ✓ Running ` cd /home/timbos/src/electraone-cli && ls .github/workflows && grep -n -E 'ru...`**
-
 ---
 
 ## User
@@ -1454,8 +1342,6 @@ I should clean out the old build and build-win64 directories first, then proceed
 I see rpmbuild is available but makensis isn't, so I can only produce a Windows ZIP, not an installer. Let me go ahead with the Linux build.
 
 </details>
-
-> **🔧 ✓ Running ` cmake -S . -B build -DCMAKE\_BUILD\_TYPE=Release > /tmp/e1-linux.log 2>&1 && c...`**
 
 > **🔧 ✓ Running ` cmake -S . -B build -DCMAKE\_BUILD\_TYPE=Release > /tmp/e1-linux.log 2>&1 && c...`**
 
@@ -1497,8 +1383,6 @@ In member function ‘_Tp* std::__new_allocator<_Tp>::allocate(size_type, const 
 This looks like the known GCC 14 false positive with -Wstringop-overflow on vector insert/push_back at -O2/-O3 — it's just a warning, not a real error. I should explain this and maybe suppress it in the tests target, but first let me check lines 135-145 of test_sysex.cpp to confirm the code itself is correct.
 
 </details>
-
-> **🔧 ✓ Reading [](file:///home/timbos/src/electraone-cli/tests/test_sysex.cpp)**
 
 > **🔧 ✓ Reading [](file:///home/timbos/src/electraone-cli/tests/test_sysex.cpp)**
 
@@ -1572,8 +1456,6 @@ ok this is a public repo. how do i best submit my changes for revieuw?
 I should explain the fork, branch, and pull request workflow for GitHub, but first let me check the current git remote and branch setup to tailor the explanation to their actual repo.
 
 </details>
-
-> **🔧 ✓ Running ` git remote -v && git branch --show-current && git log --oneline -1 && which gh`**
 
 > **🔧 ✓ Running ` git remote -v && git branch --show-current && git log --oneline -1 && which gh`**
 
@@ -1671,8 +1553,6 @@ can you make a short summary of the compile warnings?
 I need to rebuild for both Linux and Win64 since the build directories were removed, capturing warnings into a log I can grep through. I'll run these builds myself directly rather than relying on the subagent, since it failed to report properly before.
 
 </details>
-
-> **🔧 ✓ Running ` cmake -S . -B build -DCMAKE\_BUILD\_TYPE=Release > /tmp/e1-cfg.log 2>&1; cmake...`**
 
 > **🔧 ✓ Running ` cmake -S . -B build -DCMAKE\_BUILD\_TYPE=Release > /tmp/e1-cfg.log 2>&1; cmake...`**
 
@@ -1844,8 +1724,6 @@ Input ports:
 
 > **🔧 ✓ Running ` amidi -l && electraone info`**
 
-> **🔧 ✓ Running ` amidi -l && electraone info`**
-
 <details>
 <summary>💭 Thinking — Connecting Electra One</summary>
 
@@ -1868,8 +1746,6 @@ I've successfully established a bidirectional MIDI route between the USB device 
 
 > **🔧 ✓ Running ` amidi -p hw:1,0,0 -S 'F0 7E 7F 06 01 F7' -d -t 1 && amidi -p hw:1,0,0 -S 'F0...`**
 
-> **🔧 ✓ Running ` amidi -p hw:1,0,0 -S 'F0 7E 7F 06 01 F7' -d -t 1 && amidi -p hw:1,0,0 -S 'F0...`**
-
 <details>
 <summary>💭 Thinking — Investigating MIDI Data</summary>
 
@@ -1889,9 +1765,6 @@ I've successfully received initial MIDI data. Both `7F` and `00` probes yielded 
 I've just processed 666 bytes of data, meticulously verifying the internal byte count against MIDI formatting. The math checks out: 576 internal bytes plus 6 header and 1 end-of-message byte totals 666.
 
 </details>
-
-> **🔧 ✓ Running ` echo "--- T3: OSC1 Type \(174\) = 0 \(Standard\) ---" && \\
-amidi -p hw:1,0,0 -S ...`**
 
 > **🔧 ✓ Running ` echo "--- T3: OSC1 Type \(174\) = 0 \(Standard\) ---" && \\
 amidi -p hw:1,0,0 -S ...`**
@@ -1944,9 +1817,6 @@ I've identified that a dump request immediately following an OSC1 Type change (`
 > **🔧 ✓ Running ` amidi -p hw:1,0,0 -S 'F0 42 30 46 10 00 F7' -r /tmp/z1\_comb.syx -t 1 && \\
 lu...`**
 
-> **🔧 ✓ Running ` amidi -p hw:1,0,0 -S 'F0 42 30 46 10 00 F7' -r /tmp/z1\_comb.syx -t 1 && \\
-lu...`**
-
 <details>
 <summary>💭 Thinking — Verifying Real Hardware</summary>
 
@@ -1972,8 +1842,6 @@ I've confirmed through real hardware testing that byte 155 controls the OSC1 Typ
 I'm focusing on creating the Phase 2 E1 preset files, specifically for `e1/z1-osc1`. Before proceeding, I need to confirm the currently occupied preset slots on the E1 to ensure proper assignment.
 
 </details>
-
-> **🔧 ✓ Running ` electraone preset list`**
 
 > **🔧 ✓ Running ` electraone preset list`**
 
@@ -2085,10 +1953,6 @@ local f...`**
 I'm currently focused on understanding the precise grid parameters for a 6x6 layout on the MK2, specifically by examining the coordinate data within the `Korg 03R_W w_Patch parsing NewIgnis` file and referencing how `control:setSlot` functions in `main.lua` automatically handle bounds.
 
 </details>
-
-> **🔧 ✓ Running ` python3 -c '
-import json
-with open\("/home/timbos/src/Z1/Electrone/Korg 03R\_W...`**
 
 > **🔧 ✓ Running ` python3 -c '
 import json
@@ -2349,8 +2213,6 @@ I'm reviewing the Electra.one Lua test documentation, specifically the section d
 
 > **🔧 ✓ Running ` electraone runtime-info`**
 
-> **🔧 ✓ Running ` electraone runtime-info`**
-
 <details>
 <summary>💭 Thinking — Analyzed performance bottlenecks and investigated runtime delays</summary>
 
@@ -2601,6 +2463,1275 @@ What **does** update on the Z1 LCD:
 - If you already have the corresponding edit page open on the Z1 (e.g., `EDIT` → `OSC1`), you will see the values and graphics on that page change in real time as you turn knobs on the Electra One.
 - In Play mode, the `[E]` (edited) indicator appears when a parameter is modified.
 - *(The reverse direction works, though: if we add a `midi.onSysex` listener on the E1, turning a knob or editing a parameter on the Z1 can automatically switch the E1 to the matching page/control set.)*
+
+---
+
+## User
+
+*2026-11-07 14:07:17*
+
+ok i run git init and git add . 
+
+can you commit all local changes? 
+
+## Assistant (copilot/gemini-4-argon)
+
+> **🔧 ✓ Running ` git status --short && git commit -m "Initial commit: Z1 SysEx verification a...`**
+
+All staged files have been committed (`9cd5c4a Initial commit: Z1 SysEx verification and Electra One OSC1 dynamic preset`).
+
+---
+
+## User
+
+*2026-11-07 14:25:28*
+
+
+1. About the lists and the lua code.
+
+These are 13 like these:
+[*1]:Program Category                   [*2]:Scale Type
+And the 2 modsources list.
+
+What is wise regarding performance? 
+we 32MB ram. There is a possebility to store things on disk/flash too i think.
+We need to think of a correct strategy for the best performance and covering all controls.
+
+2. On the Z1 every group of controls is organized in tabs.
+I can prepare the tabs and we cann in a later stage use these to group controls.
+Or are you able to find all tabs per section?
+At some stage 
+
+
+3. We have 12 preset pages on the E1.
+So we should use them wisely and consise for all controls.
+ 
+4. The main sections are.
+
+- Program common section:
+- osc1
+- osc2
+- subosc
+- noise generator
+- mixer
+- filter (filter1 and 2)
+- envelopes ( env1, 2, 3, 4 and AMP env )
+- LFO1, 2, 3, 4
+- AMP section
+- FX section 
+- pitchbender, xy pad and other controllers
+- arpeggiator
+
+Please discuss and after we update the instructions. 
+
+## Assistant (copilot/gemini-4-argon)
+
+---
+
+## User
+
+*2026-11-07 14:27:00*
+
+@agent Try Again
+
+## Assistant (copilot/gemini-4-argon)
+
+Here is an analysis of all four points based on the E1 mk2 firmware limits (`v5.0.6`), our live RAM measurements (`31.7 MB` free C++ heap, `155 KB` Lua heap used so far), and `PROG_PRM.TXT`.
+
+---
+
+### 1. Memory & Performance Strategy (Lists, Overlays, and Control Count)
+
+**Memory is NOT the bottleneck — the 432-control limit and SD card latency are:**
+- **RAM vs. Flash/SD card:** All `[*1]`–`[*13]` lists + `MODSRC1` (49) + `MODSRC2` (36) + small enums total ~300 items (~15 KB in RAM). Keeping them **in RAM as shared E1 Overlays** is instant (`0 ms` lookup) and uses `<0.05%` of the 31.7 MB free RAM. Reading from SD/flash (`recallJson`) blocks the E1 application thread and causes UI/MIDI stutter—only use SD storage for persistent user settings, never for switching tabs/models.
+- **Static `preset.json` overlays vs. Lua `overlays.create`:**
+  - Any list that never changes (`MODSRC1`, `MODSRC2`, `[*1]`–`[*13]`, LFO waves, Filter types, etc.) can live either in `preset.json` or in a separate `z1_tables.lua` module (`require("z1_tables")` uploaded via `electraone files upload --type luaModule`) so `main.lua` stays small and fast to upload.
+  - Because E1 overlays are **shared by ID**, 50 controls can all point to `overlayId = 2` (`MODSRC1`) with zero duplication.
+- **The real hardware limit: 432 controls max per preset:**
+  - In our Phase 2 test, we used **2 controls per dynamic slot** (one hidden fader + one hidden list = 70 controls for 35 slots). If we did that on OSC1, OSC2, FX1, FX2, and Master FX, we would burn 350 of the 432 controls just on dynamic slots!
+  - **Better trick for the full synth:** An E1 **Fader** can also have an `overlayId` attached (`valObj:setOverlayId(id)` / `valObj:clearOverlay()`). When a fader has an overlay with matching values, it displays the text labels (`Off`, `EG1`, `Mod Wheel`, `SAW`, `PULSE`, etc.) just like a list!
+  - Using **1 control per dynamic slot** (a fader that attaches an overlay for enum/mod-source params and `clearOverlay()` for numeric params) cuts the dynamic control count in half (**35 controls per dynamic page instead of 70**), keeping the entire Z1 well under the 432-control cap.
+
+---
+
+### 2. Z1 Tabs / Sub-sections
+
+Yes — I can extract all Z1 sub-tabs directly from two sources we already have:
+1. `PROG_PRM.TXT` already marks the sub-groups in parentheses:
+   - **Program Common:** `(Voice Assign/Trigger)`, `(Unison)`, `(Scale)`
+   - **OSC Common:** `(Pitch Bend)`, `(Common Pitch Mod.)`, `(Portamento)`
+   - **OSC1 / OSC2 Common:** `(Pitch)`, `(Pitch Slope)`, `(Pitch Modulation)`
+   - **OSC Models:** e.g. Standard `(Wave Shape)`, VPM `(Carrier)` / `(Modulator)`, Resonance `(BPF1..4)`, Organ `(Drawbar1..3)` / `(Percussion)`, E.Piano `(Hammer)` / `(Tone Generator)` / `(Pickup)` / `(Low EQ)`, Bowed `(Bow Speed)` / `(Pressure)` / `(String Position)` / `(String Character)` / `(Reflection)` / `(PEQ)`
+   - **Mixer:** `(OSC1 Out1/2)`, `(OSC2 Out1/2)`, `(SUB OSC Out1/2)`, `(NOISE Out1/2)`, `(Feedback Out1/2)`, `(Mixer SW)`
+   - **Filter 1 & 2:** `(Cutoff Keyboard Track)`, `(Cutoff Modulation)`, `(Resonance)`, `(Filter-B)`
+   - **Amp 1 & 2:** `(Amp Keyboard Track)`, `(Amp Modulation)`
+2. `Z1-manual.pdf` — I can also read the exact LCD tab names from the Z1 manual PDF if you want the E1 group headers (`groups`) and Control Set rows to match the Z1 LCD tabs 1:1.
+
+---
+
+### 3 & 4. Fitting All 13 Sections into the 12 E1 Pages
+
+The E1 mk2 has **12 pages × 36 slots (3 Control Sets of 12 knobs)**. Here is how all 13 sections fit cleanly into **12 pages** (~335 controls total, safely under the 432 limit):
+
+| Page | Name | What is on it | Slots / Strategy |
+|---:|---|---|---|
+| **1** | **Common & Arpeggio** | Program Common (Cat, Group, Hold, Priority, Assign, Retrig, Unison, Scale) + Link Arpeggio (Pattern, Latch, Sync, Oct, Vel, Gate, Res, Speed) | 28 static controls (Set 1–2: Common, Set 3: Arp) |
+| **2** | **Pitch / Mod / Ctrl** | OSC Common (Bend +/-, Step, Common Pitch Mod, Portamento) + Controllers (SW1, SW2, Foot SW, Pedal, Pad Hold) | 21 static controls (Set 1–2: Pitch/Porta, Set 3: SW/Pedal/Pad) |
+| **3** | **OSC 1 Common + Sub** | OSC1 Common (Type, Oct, Semi, Fine, Offset, Slope, Pitch Mod 1/2) + **Sub OSC** (14 params) | 28 static controls (Set 1–2: OSC1 Common, Set 3: Sub OSC) |
+| **4** | **OSC 1 Model (Dynamic)** | OSC1 Type selector + up to 32 model-specific params (`464`–`754`, ExID 1) | **Dynamic** (33 slots; 13 models) |
+| **5** | **OSC 2 Common + Noise** | OSC2 Common (Type `0..8`, Pitch, Slope, Pitch Mod) + **Noise Generator** (8 params) | 22 static controls (Set 1–2: OSC2 Common, Set 3: Noise) |
+| **6** | **OSC 2 Model (Dynamic)** | OSC2 Type selector (`0..8`) + up to 32 model-specific params (`464`–`615`, ExID 2) | **Dynamic** (33 slots; 9 models — reuses `MODELS[0..8]` table!) |
+| **7** | **Mixer** | OSC1 Out1/2, OSC2 Out1/2, Sub Out1/2, Noise Out1/2, Feedback Out1/2, Output SWs (`224`–`257`) | 34 static controls |
+| **8** | **Filter 1 & Routing** | Filter Routing/Link/Target (`258`–`260`) + Filter 1 A & B (`261`–`287`) | 30 static controls |
+| **9** | **Filter 2 & Output** | Filter 2 A & B (`288`–`314`) + Output Pan/Level (`352`–`355`) | 31 static controls |
+| **10** | **Amp 1/2 & EGs (Tabbed)** | Set 1: Amp 1 & Amp 2 (`315`–`332`). Sets 2–3: **EG Selector tab** (`EG1`, `EG2`, `EG3`, `EG4`, `Amp EG`) + 19 EG params | 18 static + 20 **tab-switched** EG controls (saves 76 controls!) |
+| **11** | **LFO 1–4** | LFO1 (9 slots), LFO2 (9 slots), LFO3 (9 slots), LFO4 (9 slots) — or LFO 1–4 tab selector | 36 static controls (or 15 with tab selector) |
+| **12** | **Effects & EQ (Dynamic)** | FX Send (`356`–`358`), 2-Band EQ (`362`–`365`), **FX Slot selector** (`FX1`, `FX2`, `Master FX`), FX Type selector, + up to 20 dynamic FX params (`800`–`1039`, ExID 3/4/5) | **Dynamic** (uses `MODSRC2`!) |
+
+*(Optional bonus: Page 12 or a tab on Page 2 can also expose the 5 Performance Editor `PE Knob 1..5` assignments if you ever want to edit those.)*
+
+### Key Design Questions for You
+1. **Single-page vs. Tabbed EGs/LFOs:** On Page 10 (EGs) and Page 11 (LFOs), do you prefer a **Tab selector button/list** (e.g. pick `EG1`..`EG4`/`Amp EG` and edit all 19 parameters with spacious layout + graphical envelope control), or cramming multiple EGs/LFOs onto the same page?
+2. **OSC1 Common + Model:** Do you like having **Page 3 = OSC1 Common + Sub OSC** and **Page 4 = OSC1 Model (dynamic)**, or would you rather put a `[Common | Model]` tab switch on a single OSC1 page (which would free up 2 whole pages so EGs, LFOs, or FX can have their own dedicated pages)?
+3. **Fader-with-Overlay vs. Stacked Fader+List:** Shall we switch the dynamic slots to the **1-control-per-slot** approach (or test if you prefer the visual look of the native `list` control vs. `fader` with overlay labels)?
+
+Let me know your preference on those three points and I will update `INSTRUCTIONS.md` with the complete architecture!
+
+---
+
+## User
+
+*2026-11-07 14:54:07*
+
+Lets discuss the layout more.
+
+1.  for the envelopes there is the "type": "dx7envelope" it offers Rate1, 2, 3, 4 and Level1, 2, 3, 4
+we can use those to save space and have a nice animation.  So one spot will cover 8 parameters.  so 4 spots will cover 8x4 envelope parameters.  
+
+Per envelope there are 19 controls, we have 38 space per preset page. 
+
+we should look for more opportunities to compact things.
+
+Like doing editing of FX or Multi programs we could reveal those controls with a button. 
+You select FX and we show all the FX paramers.   Modulations "hidden by default" but a button will reveal them.
+
+2. yeah that tab could be an idea.  Would that be a list selector?
+We can consolodate OSC1 and OSC2 like that 2. 
+
+3. not sure yet. 
+
+Can you reply what you understand from my suggestions? How much slots can we save like this? I am looking for a balance of visabilty vs saving space. 
+
+4. we can also remove all modulations and consolidate them in a dynamic modulation page.
+
+Please let me know what you think?
+
+
+
+## Assistant (copilot/gemini-4-argon)
+
+Here is what I understand from your four suggestions, how the E1 hardware handles them, and the exact slot/control savings we get.
+
+---
+
+### 1. Envelope Widget (`dx7envelope` / `adssr`) + "Reveal Modulations" Button
+**What you're proposing:**
+Use a graphical multi-value envelope widget so one visual block covers the envelope curve (and gives a live envelope animation), rather than 8–9 separate faders. Keep the 10 modulation parameters per EG hidden by default behind a reveal toggle/button.
+
+**Two important E1 hardware facts to keep in mind:**
+1. **`dx7envelope` vs. `adssr`:**
+   - The Z1 envelope has **9 curve parameters**: `Start Level` (`-99..+99`), `Attack Time`, `Attack Level`, `Decay Time`, `Break Level`, `Slope Time`, `Sustain Level`, `Release Time`, `Release Level` (Amp EG has 7, since Start & Release Level are fixed at `0`).
+   - `dx7envelope` has 8 handles (`r1, l1, r2, l2, r3, l3, r4, l4`), which maps nicely to Attack/Decay/Slope/Release + AttackLvl/BreakLvl/SustainLvl/ReleaseLvl (with 1 fader next to it for `Start Level`), **or** we can use `adssr` (`attack, decay, break, slope, sustain, release`). Note: check if `dx7envelope` allows negative display ranges (`-99..+99`) for levels on E1—if it clamps to `0..99`, `EG1..4` levels can't go negative unless offset, whereas `Amp EG` (`0..99`) fits natively.
+2. **Screen space vs. Physical Knob (Pot) assignment on E1:**
+   - A `dx7envelope` spans **2–3 visual slots wide** on the screen, so all 5 EGs (`EG1`–`EG4` + `Amp EG`) easily fit **visually** on a single page!
+   - However, each Control Set only has **12 physical knobs (`potId 1..12`)**, and a `dx7envelope` uses **8 knobs** when active.
+   - **How to make that feel great:** Put all 5 `dx7envelope` widgets on **one Envelopes page** so you see all 5 envelope curves side-by-side at once. Touching an envelope (or selecting `EG1..4 / Amp EG` + a `[Curve | Mod]` button) binds the 12 physical knobs to that envelope's 9 curve parameters or its 10 modulation parameters!
+
+**Slot savings:**
+- Without compaction: 5 EGs × 19 params = **95 slots** (almost 3 full pages).
+- With 5 envelope widgets + a `[EG1 | EG2 | EG3 | EG4 | AmpEG]` & `[Curve | Mod]` selector: **1 single page (~22 controls total)** — **saves ~73 controls and 2 whole pages!**
+
+---
+
+### 2. Tab / Section Selector (`OSC1 / OSC2 / Sub / Noise`, `FX1 / FX2 / Master FX`)
+**What you're proposing:**
+Instead of separate pages for OSC1 Common, OSC1 Model, OSC2 Common, OSC2 Model, etc., use a selector (either a **row of Pad buttons** at the top like real tabs, or a **List selector** in Slot 1) to switch what the page shows.
+
+- **Pads vs. List for tabs:**
+  - If there are **2–4 tabs** (e.g. `[OSC1] [OSC2] [Sub/Noise]`, or `[Main] [Mod]`, or `[FX1] [FX2] [M.FX]`), **button-like Pads** (or a single cycling Pad / List in Slot 1–2) are fastest—one tap on the touchscreen switches the view.
+  - If there are **13 choices** (like `OSC Model`), a **List control** on Knob 1 is best.
+- **Consolidating OSC1 & OSC2:**
+  - OSC2 is 100% identical to OSC1 (just `ExID = 2` instead of `ExID = 1`, and models `0..8` instead of `0..12`, plus common params `188..201` instead of `174..187`).
+  - A single `[OSC 1 | OSC 2]` toggle button can switch the **entire Oscillator page** between OSC1 and OSC2!
+
+**Slot savings:**
+- Sharing the dynamic Model page between OSC1 and OSC2 **saves 35 controls and 1–2 pages immediately**, with zero loss of visibility because you edit one oscillator model at a time anyway.
+
+---
+
+### 4. Stripping Modulations Out vs. "Modulation Reveal" Button (or Dynamic Mod Page)
+Let's look at the numbers across the whole Z1 Program (`PROG_PRM.TXT`):
+
+| Section | Core Sound Params (no Mod) | Modulation Params (`Mod Src` + `Mod Int`) | Total |
+|---|---:|---:|---:|
+| **OSC1 Model (largest: Resonance)** | 20 | 12 | 32 |
+| **OSC1 Model (Standard)** | 12 | 10 | 22 |
+| **OSC1 + OSC2 + Sub Common** | 23 (7+7+8 + Wave) | 18 (6 each) | 41 |
+| **Noise Generator** | 4 (Type, Trim, Cut, Res) | 4 | 8 |
+| **Mixer (5 ch × Out1/Out2 + SWs)** | 14 (10 Levels + 4 SWs) | 20 (10 Src + 10 Int) | 34 |
+| **Filter 1 + Filter 2 + Routing** | 33 | 22 | 55 |
+| **Amp 1 + Amp 2** | 10 | 6 | 16 |
+| **EG 1–4 + Amp EG** | 43 (9×4 + 7) | 50 (10×5) | 93 |
+| **LFO 1–4** | 24 (6×4) | 24 (6×4) | 48 |
+| **Output + FX Send + EQ** | 7 | 4 | 11 |
+| **FX 1 / FX 2 / Master FX (dynamic)** | ~14 per FX | ~6 per FX | ~20 |
+| **Total across patch** | **~190 core params** | **~166 mod params** | **~356** |
+
+Look at that split: **almost half (47%) of all parameters on the Z1 are `Mod Source` + `Mod Intensity` pairs!**
+
+#### Comparing the Two Approaches for Modulations:
+- **Option A — "Show Mod" Toggle Button on Each Page (Contextual Reveal):**
+  - By default, every page shows **only the Core Sound Parameters**—clean, uncluttered, and almost everything fits in **Control Set 1 (the top 12 knobs)** without even switching control sets!
+  - Example:
+    - **Mixer without Mod:** Only **14 controls** (OSC1 Out1/2, OSC2 Out1/2, Sub Out1/2, Noise Out1/2, FB Out1/2, 4 Mute SWs) instead of 34!
+    - **Standard OSC without Mod:** Only **12 controls** (fits on 1 single bank of 12 knobs!) instead of 22.
+    - **4 LFOs without Mod:** 6 controls per LFO × 4 = **24 controls** (all 4 LFOs fit on one page!).
+  - Tapping a `[MOD]` button on that page (or switching to Control Set 3) reveals the modulation sources & intensities for that section.
+- **Option B — A Dedicated Dynamic "Modulation Matrix" Page:**
+  - All sound pages have **zero** `Mod Source` / `Mod Int` clutter—only pure sound-shaping controls.
+  - One dedicated **Modulation Page** has a **Target Group selector** (`OSC1`, `OSC2`, `Sub/Noise`, `Mixer`, `Filter 1`, `Filter 2`, `Amp/Output`, `EG 1–5`, `LFO 1–4`, `FX`) and dynamically populates the slots with all `Mod Source` (List 1 / List 2) + `Mod Intensity` pairs for that target.
+  - **Bonus:** This makes the entire synth feel like it has a unified **Modulation Matrix**, and it reuses the exact same dynamic-slot Lua engine we just built and tested!
+
+---
+
+### How Compact the Whole Z1 Becomes with This Strategy
+
+If we combine:
+1. **Core-only pages** (no mod clutter on the main pages),
+2. **Dynamic Mod Matrix page** (or `[Main | Mod]` toggle),
+3. **Graphical `dx7envelope` page** for the 5 EGs,
+4. **Tabbed Dynamic OSC page** (`[OSC1 | OSC2]`) and **Tabbed Dynamic FX page** (`[FX1 | FX2 | MasterFX]`):
+
+Then the **entire Korg Z1 fits into just 6–7 clean pages** (out of 12), and almost every page uses only **12–24 knobs** so you rarely even need Control Set 3:
+
+1. **Page 1 —OSC 1 & 2 (Core + Model):** `[OSC1 | OSC2]` switch + `OSC Type` + Pitch/Slope (7) + Core Model params (3–20).
+2. **Page 2 — Sub / Noise / Mixer (Core):** Sub OSC (8), Noise (4), Mixer Levels & Switches (14) = 26 controls.
+3. **Page 3 — Filter 1 & 2 (Core):** Routing (3), Filter 1 A/B (11), Filter 2 A/B (11) = 25 controls.
+4. **Page 4 — Envelopes (`dx7envelope`) & Amp:** Visual envelope curves for `EG1..4` & `Amp EG` + Amp 1/2 levels & keytrack.
+5. **Page 5 — LFO 1–4 (Core):** All 4 LFOs on one page (Wave, KeySync, Freq, Fade, Offset, MIDI Sync × 4 = 24 controls).
+6. **Page 6 — Modulation Matrix (Dynamic):** Select any section (`OSC1`, `OSC2`, `Mixer`, `Filter`, `EG`, `LFO`, `FX`) → shows all its `Mod Source` + `Mod Int` pairs.
+7. **Page 7 — Effects & EQ (Dynamic):** `[FX1 | FX2 | MasterFX]` switch + FX Type + dynamic FX params + 2-Band EQ + Output.
+8. **Page 8 — Common / Controllers / Arpeggiator:** Unison, Scale, Pitch Bend, Portamento, SW1/2, Pedal, Arpeggiator, PE Knobs.
+
+*(That leaves 4 spare pages on the E1 for a **Multi Setup** editor or **Arpeggio Pattern** editor later!)*
+
+What do you think of **separating Core Sound controls from a unified Dynamic Modulation page** (or do you prefer a `[Core | Mod]` button per page)? And shall we test `dx7envelope` on the E1 next to see how it renders with Z1 EG levels?
+
+---
+
+## User
+
+*2026-11-07 14:59:56*
+
+yes that sounds great. 
+
+Please update the instructions. 
+
+Then start implementation.  
+
+
+
+## Assistant (copilot/gemini-4-argon)
+
+*No response recorded.*
+
+---
+
+## User
+
+*2026-11-07 15:02:52*
+
+So after you update the instructions work on the EG's page
+
+Everytime you implement a part save it in a new preset folder in `e1` in this repo.
+
+So after we finish the preset layout I will test. 
+Program name can be prepared but patchparsing is realy the last phase. 
+
+## Assistant (copilot/gemini-4-argon)
+
+> **🔧 ✓ Created 4 todos**
+
+> **🔧 ✓ Running ` python3 -c '
+import json
+with open\("/home/timbos/src/Z1/Electrone/Yamaha TX7...`**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/INSTRUCTIONS.md)**
+
+> **🔧 ✓ Reading [](file:///home/timbos/.config/Code/User/workspaceStorage/407c531e5f6f4b0fdcbba90069a34a40/GitHub.copilot-chat/chat-session-resources/7243e89d-a6e6-455d-8e14-52be97567b4a/call_MXwzazI2dnZoY2M3ejNQam1IaUM__vscode-1794011010753/content.txt#1-1), lines 1 to 200**
+
+> **🔧 ✓ Reading [](file:///home/timbos/.config/Code/User/workspaceStorage/407c531e5f6f4b0fdcbba90069a34a40/GitHub.copilot-chat/chat-session-resources/7243e89d-a6e6-455d-8e14-52be97567b4a/call_MXwzazI2dnZoY2M3ejNQam1IaUM__vscode-1794011010753/content.txt#201-201), lines 201 to 400**
+
+```
+
+> *[Code edit applied]*
+
+```
+
+> **🔧 ✓ *Create e1/z1-eg preset (preset.json, main.lua, main-tests.lua)* (3/4)**
+
+> **🔧 ✓ Creating [](file:///home/timbos/src/Z1/e1/z1-eg/main.lua)**
+
+> *[Code edit applied]*
+
+> **🔧 ✓ Running ` luac5.4 -p /home/timbos/src/Z1/e1/z1-eg/main.lua && python3 -c '
+import json...`**
+
+> **🔧 ✓ Creating [](file:///home/timbos/src/Z1/e1/z1-eg/main-tests.lua)**
+
+> *[Code edit applied]*
+
+> **🔧 ✓ *Upload e1/z1-eg to E1 and verify with Lua tests* (4/4)**
+
+> **🔧 ✓ Running ` luac5.4 -p /home/timbos/src/Z1/e1/z1-eg/main.lua /home/timbos/src/Z1/e1/z1-e...`**
+
+```
+
+> *[Code edit applied]*
+
+```
+
+> **🔧 ✓ Running ` electraone files upload --location slots --type lua --bank 1 --slot 0 --no-p...`**
+
+```
+
+> *[Code edit applied]*
+
+```
+
+> **🔧 ✓ Running ` electraone --timeout 15000 raw --category 0x02 --command 0x42 --payload-file...`**
+
+> **🔧 ✓ *Upload e1/z1-eg to E1 and verify with Lua tests* (4/4)**
+
+I have updated `INSTRUCTIONS.md` with the compact 8-page architecture and incremental folder workflow, and implemented + verified the **Envelopes (`EG1`–`EG4` & `Amp EG`)** module in `z1-eg`.
+
+### What Was Created in `z1-eg`
+- `preset.json` (21 controls total, covering all **93** Z1 envelope parameters!)
+- `main.lua`
+- `main-tests.lua` — **4/4 test cases passing** on your Electra One (`v5.0.6`).
+
+### Layout on the Electra One (Uploaded to **Bank 2, Slot 1** / `--bank 1 --slot 0`)
+- **Row 1 (Slots 1–5):** 5 `dx7envelope` graphical controls side-by-side (`EG 1`, `EG 2`, `EG 3`, `EG 4`, `AMP EG`).
+  - Turning the knob directly adjusts `r1` (`Attack Time`), and **tapping any envelope** opens the full-screen 8-knob detail editor for `l1..l4` (`Attack/Break/Sustain/Release Level`, `-99..+99` for `EG1..4` and `0..99` for `Amp EG`) and `r1..r4` (`Attack/Decay/Slope/Release Time`, `0..99`).
+- **Slot 6:** `SHOW MOD` / `HIDE MOD` toggle button (modulations are hidden by default to keep the screen clean).
+- **Row 2 (Slots 7–10):** `EG1 StartLvl` .. `EG4 StartLvl` (`-99..+99`).
+- **Slot 12:** `MOD TARGET` selector (`EG 1`, `EG 2`, `EG 3`, `EG 4`, `Amp EG`).
+- **Control Set 2 (Slots 13–22, revealed when `SHOW MOD` is active):** The 10 modulation parameters (`Lvl Src`, `Lvl Int`, `Velocity`, `Time Src`, `Time Int`, `Node Src`, `Atk Mod`, `Dcy Mod`, `Slp Mod`, `Rls Mod`) dynamically relabeled and mapped to the selected `MOD TARGET` envelope.
+
+Shall I proceed to the next module folder (e.g., `e1/z1-lfo-amp/` or `e1/z1-filter/`), or would you like to check `z1-eg` on the screen first?
+
+---
+
+## User
+
+*2026-11-07 15:19:06*
+
+the hide/show mode is great but we have so much space.
+
+Lets always show the modulations.
+
+in the middle row AMP EG mods
+the bottom row all modulations and the switch to change EG1,2,3,4 
+
+Please note if I switch EG that the current value need to be saved. Now when I set a modulation for EG1 to +21 when I switch mod target they all show that value. 
+
+## Assistant (copilot/gemini-4-argon)
+
+> **🔧 ✓ Creating [](file:///home/timbos/src/Z1/e1/z1-eg/main.lua)**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/e1/z1-eg/main.lua#1-1), lines 1 to 300**
+
+```
+
+> *[Code edit applied]*
+
+```
+
+```
+
+> *[Code edit applied]*
+
+```
+
+> **🔧 ✓ Running ` luac5.4 -p /home/timbos/src/Z1/e1/z1-eg/main.lua && python3 -c '
+import json...`**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/e1/z1-eg/main-tests.lua)**
+
+```
+
+> *[Code edit applied]*
+
+```
+
+> **🔧 ✓ Running ` luac5.4 -p /home/timbos/src/Z1/e1/z1-eg/main.lua /home/timbos/src/Z1/e1/z1-e...`**
+
+```
+
+> *[Code edit applied]*
+
+```
+
+> **🔧 ✓ Running ` electraone files upload --location slots --type lua --bank 1 --slot 0 --no-p...`**
+
+```
+
+> *[Code edit applied]*
+
+```
+
+```
+
+> *[Code edit applied]*
+
+```
+
+> **🔧 ✓ Running ` electraone files upload --location slots --type lua --bank 1 --slot 0 --no-p...`**
+
+```
+
+> *[Code edit applied]*
+
+```
+
+> **🔧 ✓ Running ` electraone files upload --location slots --type lua --bank 1 --slot 0 --no-p...`**
+
+> **🔧 ✓ Running ` electraone raw --category 0x02 --command 0x42 --payload-ascii '
+test.case\("d...`**
+
+```
+
+> *[Code edit applied]*
+
+```
+
+```
+
+> *[Code edit applied]*
+
+```
+
+> **🔧 ✓ Running ` luac5.4 -p /home/timbos/src/Z1/e1/z1-eg/main.lua && \\
+electraone files uploa...`**
+
+Updated `preset.json`, `main.lua`, and `main-tests.lua`, uploaded them to **Bank 2, Slot 1** (`--bank 1 --slot 0`), and verified **5/5 tests passing** on the Electra One.
+
+### Updated Layout & Per-EG State Memory
+- **Top section (Control Set 1, Rows 1–2):**
+  - Row 1 (Slots 1–5): `EG 1`, `EG 2`, `EG 3`, `EG 4`, `AMP EG` (`dx7envelope` controls)
+  - Row 2 (Slots 7–10): `EG1 StartLvl` .. `EG4 StartLvl` (`-99..+99`)
+- **Middle section (Control Set 2, Rows 3–4, Slots 13–22) — `AMP EG MODULATIONS` (Always visible):**
+  - Dedicated controls (`21..30`) for `Amp Lvl Src`, `Amp Lvl Int`, `Amp Velocity`, `Amp Time Src`, `Amp Time Int`, `Amp Node Src`, `Amp Atk Mod`, `Amp Dcy Mod`, `Amp Slp Mod`, `Amp Rls Mod` (Z1 IDs `342..351`).
+- **Bottom section (Control Set 3, Rows 5–6, Slots 25–35) — `EG 1..4 MODULATIONS` (Always visible):**
+  - **Slot 25 (`EG SELECT`):** Switches between `EG 1`, `EG 2`, `EG 3`, and `EG 4`.
+  - **Slots 26–35 (`31..40`):** The 10 modulation controls for the selected `EG 1..4`.
+  - **Per-EG value memory (`egModValues[0..3]`):** Whenever you change a modulation value on `EG 1` (e.g. `+21`), it is saved in `egModValues[0]`. When you switch `EG SELECT` to `EG 2`, the controls automatically update (`valObj:updateValue`) to show `EG 2`'s own saved values (`0`, or whatever you set for `EG 2`), and switching back to `EG 1` restores `+21` without re-transmitting over MIDI.
+
+---
+
+## User
+
+*2026-11-07 15:34:58*
+
+ok great please contineu with the filter page EG3 is the filteramp so the dx7 env for EG3 can be on the FILTER page. 
+
+
+
+## Assistant (copilot/gemini-4-argon)
+
+> **🔧 ✓ Created 2 todos**
+
+> **🔧 ✓ Creating [](file:///home/timbos/src/Z1/e1/z1-filter/main.lua)**
+
+> *[Code edit applied]*
+
+> **🔧 ✓ Running ` luac5.4 -p /home/timbos/src/Z1/e1/z1-filter/main.lua && python3 -c '
+import ...`**
+
+```
+
+> *[Code edit applied]*
+
+```
+
+```
+
+> *[Code edit applied]*
+
+```
+
+> **🔧 ✓ Creating [](file:///home/timbos/src/Z1/e1/z1-filter/main-tests.lua)**
+
+> *[Code edit applied]*
+
+> **🔧 ✓ *Upload e1/z1-filter to E1 and verify with Lua tests* (2/2)**
+
+> **🔧 ✓ Running ` luac5.4 -p /home/timbos/src/Z1/e1/z1-filter/main.lua /home/timbos/src/Z1/e1/...`**
+
+> **🔧 ✓ *Upload e1/z1-filter to E1 and verify with Lua tests* (2/2)**
+
+I have implemented and verified the **Filter 1 & 2 + EG3 (Filter EG)** preset in `z1-filter` and uploaded it to **Bank 2, Slot 2** (`--bank 1 --slot 1`).
+
+### Files Created
+- `preset.json` (36 slots, covering all **54** Filter parameters + **9** EG3 curve parameters)
+- `main.lua`
+- `main-tests.lua` — **3/3 test cases passing** on your Electra One (`v5.0.6`).
+
+### Page Layout on the Electra One
+- **Top Section (`ROUTING, EG3 & FILTER 1 / 2 CORE`, Control Set 1, Slots 1–12):**
+  - **Row 1 (Slots 1–6):** `Routing` (`SERIAL 1 / SERIAL 2 / PARALLEL`), `Flt2 Link` toggle pad, `F1 Type` (`LPF / HPF / BPF / BRF / 2BPF`), `F1 In Trim`, `F1 Cutoff`, `F1 Reso`
+  - **Row 2 (Slots 7–12):** **`EG3 (FLT EG)` `dx7envelope`** (Slot 7) + **`EG3 StartLvl`** (Slot 8), `F2 Type`, `F2 In Trim`, `F2 Cutoff`, `F2 Reso`
+- **Middle Section (`FILTER 1/2 MOD & KEY TRACK`, Control Set 2, Slots 13–24):**
+  - **Slot 13 (`FLT SELECT`):** Switches the middle and bottom sections between **`Filter 1`** (IDs `264..287`) and **`Filter 2`** (IDs `291..314`), saving & restoring each filter's values in memory (`fltSavedValues[0..1]`).
+  - **Slots 14–24:** `Cut ModEG` (`EG1..4 / Amp EG`), `Cut EG Int`, `Cut Src1`, `Cut Int1`, `Cut Src2`, `Cut Int2`, `Reso Src`, `Reso Int`, `Trk LoKey` (`C-1..G9`), `Trk HiKey` (`C-1..G9`), `Trk LoInt`
+- **Bottom Section (`FILTER 1/2 FILTER-B (2BPF) & TRACK`, Control Set 3, Slots 25–36):**
+  - **Slots 25–36:** `Trk HiInt`, `B In Trim`, `B Cutoff`, `B Reso`, `B LoKey`, `B HiKey`, `B LoInt`, `B HiInt`, `B EG Int`, `B Mod1Int`, `B Mod2Int`, `B ResoInt`
+
+Which module should we build next (`e1/z1-lfo-amp/`, `e1/z1-sub-noise-mixer/`, `e1/z1-fx/`, or `e1/z1-osc/` with `[OSC1 | OSC2]`)?
+
+---
+
+## User
+
+*2026-11-07 15:53:17*
+
+Both filters have a EG assignment for Filter Freq. 
+
+I want to see whatever EG is assigned (a DX7 env) .
+If Filter 1 is selected we see the EG assigned to Filter1 if Filter 2 selected we see the DX7 env assigned to filter 2.  But only for the filter frequency assignment. 
+
+I have a hard time to see what the bottom row does. 
+
+## Assistant (copilot/gemini-4-argon)
+
+---
+
+## User
+
+*2026-11-07 16:00:38*
+
+@agent Try Again
+
+## Assistant (copilot/gemini-4-argon)
+
+---
+
+## User
+
+*2026-11-07 16:03:39*
+
+@agent Try Again
+
+## Assistant (copilot/gemini-4-argon)
+
+---
+
+## User
+
+*2026-11-07 16:20:29*
+
+@agent Try Again
+
+## Assistant (copilot/gemini-4-argon)
+
+---
+
+## User
+
+*2026-11-07 16:24:55*
+
+@agent Try Again
+
+## Assistant (copilot/gemini-4-argon)
+
+---
+
+## User
+
+*2026-11-07 16:27:21*
+
+Both filters have a EG assignment for Filter Freq.
+
+I want to see whatever EG is assigned (a DX7 env) .
+If Filter 1 is selected we see the EG assigned to Filter1 if Filter 2 selected we see the DX7 env assigned to filter 2. But only for the filter frequency assignment.
+
+I have a hard time to see what the bottom row does.
+
+## Assistant (copilot/gemini-4-argon)
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/e1/z1-filter/main.lua)**
+
+```
+
+> *[Code edit applied]*
+
+```
+
+```
+
+> *[Code edit applied]*
+
+```
+
+```
+
+> *[Code edit applied]*
+
+```
+
+> **🔧 ✓ Running ` luac5.4 -p /home/timbos/src/Z1/e1/z1-filter/main.lua && python3 -c '
+import ...`**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/e1/z1-filter/main-tests.lua)**
+
+```
+
+> *[Code edit applied]*
+
+```
+
+> **🔧 ✓ Running ` luac5.4 -p /home/timbos/src/Z1/e1/z1-filter/main.lua /home/timbos/src/Z1/e1/...`**
+
+```
+
+> *[Code edit applied]*
+
+```
+
+> **🔧 ✓ Running ` electraone files upload --location slots --type lua --bank 1 --slot 1 --no-p...`**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/e1/z1-filter/main-tests.lua#65-65), lines 65 to 94**
+
+> **🔧 ✓ Running ` wc -c /home/timbos/src/Z1/e1/z1-filter/main-tests.lua && sed -E 's/--.\*$//' ...`**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/e1/z1-filter/main.lua#340-340), lines 340 to 390**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/e1/z1-filter/main.lua#390-390), lines 390 to 445**
+
+```
+
+> *[Code edit applied]*
+
+```
+
+```
+
+> *[Code edit applied]*
+
+```
+
+```
+
+> *[Code edit applied]*
+
+```
+
+> **🔧 ✓ Running ` luac5.4 -p /home/timbos/src/Z1/e1/z1-filter/main.lua /home/timbos/src/Z1/e1/...`**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/e1/z1-filter/main.lua#260-260), lines 260 to 360**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/e1/z1-filter/main.lua#360-360), lines 360 to 463**
+
+> **🔧 ✓ Running ` electraone raw --category 0x02 --command 0x42 --payload-ascii '
+test.case\("d...`**
+
+> **🔧 ✓ Running ` electraone lua get --bank 1 --slot 1 | wc -l && wc -l /home/timbos/src/Z1/e1...`**
+
+> **🔧 ✓ Running ` grep -n "^function " /home/timbos/src/Z1/e1/z1-filter/main.lua`**
+
+```
+
+> *[Code edit applied]*
+
+```
+
+```
+
+> *[Code edit applied]*
+
+```
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/e1/z1-filter/main.lua#360-360), lines 360 to 455**
+
+> **🔧 ✓ Running ` luac5.4 -p /home/timbos/src/Z1/e1/z1-filter/main.lua /home/timbos/src/Z1/e1/...`**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/e1/z1-filter/main.lua#430-430), lines 430 to 455**
+
+```
+
+> *[Code edit applied]*
+
+```
+
+> **🔧 ✓ Running ` luac5.4 -p /home/timbos/src/Z1/e1/z1-filter/main.lua /home/timbos/src/Z1/e1/...`**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/e1/z1-filter/main.lua#1-1), lines 1 to 250**
+
+```
+
+> *[Code edit applied]*
+
+```
+
+```
+
+> *[Code edit applied]*
+
+```
+
+> **🔧 ✓ Running ` luac5.4 -p /home/timbos/src/Z1/e1/z1-filter/main.lua /home/timbos/src/Z1/e1/...`**
+
+> **🔧 ✓ Running ` python3 -c '
+import json
+with open\("/home/timbos/src/Z1/e1/z1-filter/preset....`**
+
+> **🔧 ✓ Running ` electraone raw --category 0x02 --command 0x42 --payload-ascii '
+test.case\("d...`**
+
+> **🔧 ✓ Running ` electraone preset get --bank 1 --slot 1 | python3 -c '
+import sys, json
+p = ...`**
+
+> **🔧 ✓ Running ` electraone raw --category 0x02 --command 0x42 --payload-ascii '
+test.case\("d...`**
+
+```
+
+> *[Code edit applied]*
+
+```
+
+```
+
+> *[Code edit applied]*
+
+```
+
+> **🔧 ✓ Running ` python3 -c '
+import json
+with open\("/home/timbos/src/Z1/e1/z1-filter/preset....`**
+
+```
+
+> *[Code edit applied]*
+
+```
+
+```
+
+> *[Code edit applied]*
+
+```
+
+```
+
+> *[Code edit applied]*
+
+```
+
+> **🔧 ✓ Running ` electraone files upload --location slots --type lua --bank 1 --slot 1 --no-p...`**
+
+```
+
+> *[Code edit applied]*
+
+```
+
+> **🔧 ✓ Running ` electraone files upload --location slots --type lua --bank 1 --slot 1 --no-p...`**
+
+```
+
+> *[Code edit applied]*
+
+```
+
+> **🔧 ✓ Running ` electraone files upload --location slots --type lua --bank 1 --slot 1 --no-p...`**
+
+Updated `preset.json`, `main.lua`, and `main-tests.lua` in **Bank 2, Slot 2** (`--bank 1 --slot 1`) with **3/3 tests passing** on the Electra One.
+
+### 1. Dynamic Assigned Cutoff EG (`dx7envelope` in Slot 7 + `StartLvl` in Slot 8)
+- The `dx7envelope` widget (`Control 4`) and `StartLvl` fader (`Control 5`) now **automatically follow whichever EG (`EG1`, `EG2`, `EG3`, `EG4`, or `Amp EG`) is assigned to the selected filter's Cutoff Mod EG**:
+  - When **`Filter 1`** is selected (`FLT SELECT = Filter 1`), it shows and edits the EG chosen by **`F1 Cut ModEG`** (e.g. `F1 EG3`, `F1 EG1`, `F1 Amp EG`).
+  - When **`Filter 2`** is selected (`FLT SELECT = Filter 2`), it snaps to the EG chosen by **`F2 Cut ModEG`** (e.g. `F2 EG3`, `F2 EG2`, `F2 Amp EG`).
+  - If you change `Cut ModEG` on either filter, the `dx7envelope` widget immediately relabels, restores that EG's saved curve values (`egCurveSaved[1..5]`), and sends the correct Z1 Parameter IDs (`31..39` for EG1, `50..58` for EG2, `69..77` for EG3, `88..96` for EG4, `334..340` for Amp EG; and hides `StartLvl` when `Amp EG` is selected).
+
+### 2. What the Bottom Section (`Filter-B` / `2BPF`) Does — and Why It Is Now Auto-Hidden
+- On the Korg Z1, each filter (`Filter 1` and `Filter 2`) has 5 modes: `LPF`, `HPF`, `BPF`, `BRF`, and **`2BPF` (Dual Bandpass Filter)**.
+- When a filter is set to **`2BPF`**, it acts as **two resonant bandpass filters in parallel (`Band-A` and `Band-B`)** for formant/vowel sounds. Parameters `277..287` (Filter 1) and `304..314` (Filter 2) are the Cutoff, Resonance, Trim, Key Track, and Modulation Intensities for that **second bandpass peak (`Filter-B`)**.
+- In `LPF`, `HPF`, `BPF`, and `BRF` modes, `Filter-B` does nothing on the Z1 — so the bottom section (`2BPF TrimB`, `2BPF CutB`, `2BPF ResoB`, etc.) is now **hidden automatically** unless the active filter's `Type` is set to **`2BPF`**! (And `Trk HiInt` for the main filter sits at Slot 25 so all 4 main Key Track controls stay visible.)
+
+---
+
+## User
+
+*2026-11-07 16:56:44*
+
+nice 
+
+can you check and use this for the 2 filter Freq and cuttoff?
+
+https://app.electra.one/controls/v8dLYsyjUJOJpKQDbDm46nfsH0s2_Filter_Sel
+
+## Assistant (copilot/gemini-4-argon)
+
+> **🔧 ✓ Fetching https://app.electra.one/controls/v8dLYsyjUJOJpKQDbDm46nfsH0s2_Filter_Sel**
+
+> **🔧 ✓ Running ` curl -sL 'https://app.electra.one/controls/v8dLYsyjUJOJpKQDbDm46nfsH0s2\_Filt...`**
+
+> **🔧 ✓ Running ` curl -sL 'https://app.electra.one/\_nuxt/1b87991.js' 'https://app.electra.one...`**
+
+> **🔧 ✓ Running ` curl -sL 'https://app.electra.one/\_nuxt/1b87991.js' 'https://app.electra.one...`**
+
+> **🔧 ✓ Running ` curl -sL 'https://firestore.googleapis.com/v1/projects/electra-one-716c4/dat...`**
+
+> **🔧 ✓ Tool call**
+
+> **🔧 ✓ Clicking Controls tab in Public library in [Browser](vscode-browser:/fcb27dc9-1bfa-4dc5-bae8-bd4f7efa3723?vscodeLinkType=browser)**
+
+> **🔧 ✓ Tool call**
+
+> **🔧 ✓ Running ` curl -sL 'https://api.github.com/repos/roomi-fields/electraone-widgets/git/t...`**
+
+> **🔧 ✓ Running ` curl -sL 'https://api.github.com/repos/roomi-fields/electraone-widgets/conte...`**
+
+> **🔧 ✓ Running ` curl -sL 'https://api.github.com/repos/roomi-fields/electraone-widgets/git/t...`**
+
+> **🔧 ✓ Reading [](file:///home/timbos/.config/Code/User/workspaceStorage/407c531e5f6f4b0fdcbba90069a34a40/GitHub.copilot-chat/chat-session-resources/7243e89d-a6e6-455d-8e14-52be97567b4a/call_MHx2dlBxVWpnT3RWRkJwVlRWVTc__vscode-1794011010857/content.txt#1-1), lines 1 to 250**
+
+---
+
+## User
+
+*2026-11-07 17:01:30*
+
+ok nevermind.  We will do this later. 
+
+Can you build the LFO page? Check for widgegts in the roomi-field repo. 
+
+## Assistant (copilot/gemini-4-argon)
+
+> **🔧 ✓ Reading [](file:///home/timbos/.config/Code/User/workspaceStorage/407c531e5f6f4b0fdcbba90069a34a40/GitHub.copilot-chat/chat-session-resources/7243e89d-a6e6-455d-8e14-52be97567b4a/call_MHx2dlBxVWpnT3RWRkJwVlRWVTc__vscode-1794011010857/content.txt#240-240), lines 240 to 287**
+
+> **🔧 ✓ Running ` curl -sL 'https://raw.githubusercontent.com/roomi-fields/electraone-widgets/...`**
+
+> **🔧 ✓ Running ` curl -sL 'https://raw.githubusercontent.com/roomi-fields/electraone-widgets/...`**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/Z1_MIDIimp/PROG_PRM.TXT#880-880), lines 880 to 900**
+
+> **🔧 ✓ Reading [](file:///home/timbos/.config/Code/User/workspaceStorage/407c531e5f6f4b0fdcbba90069a34a40/GitHub.copilot-chat/chat-session-resources/7243e89d-a6e6-455d-8e14-52be97567b4a/call_MHxuY2JQZzVxWWZSR0hiRFU5a2s__vscode-1794011010861/content.txt#1-1), lines 1 to 250**
+
+> **🔧 ✓ Reading [](file:///home/timbos/.config/Code/User/workspaceStorage/407c531e5f6f4b0fdcbba90069a34a40/GitHub.copilot-chat/chat-session-resources/7243e89d-a6e6-455d-8e14-52be97567b4a/call_MHxuY2JQZzVxWWZSR0hiRFU5a2s__vscode-1794011010861/content.txt#250-250), lines 250 to 350**
+
+> **🔧 ✓ Running ` python3 -c '
+with open\("/home/timbos/src/Z1/Manuals/Z1-manual.pdf", "rb"\) as...`**
+
+> **🔧 ✓ Running ` pdftotext /home/timbos/src/Z1/Manuals/Z1-manual.pdf - | grep -i -C 6 "Sync B...`**
+
+> **🔧 ✓ Creating [](file:///home/timbos/src/Z1/e1/z1-lfo/main.lua)**
+
+> *[Code edit applied]*
+
+> **🔧 ✓ Running ` luac5.4 -p /home/timbos/src/Z1/e1/z1-lfo/main.lua && python3 -c '
+import jso...`**
+
+> **🔧 ✓ Creating [](file:///home/timbos/src/Z1/e1/z1-lfo/main-tests.lua)**
+
+> *[Code edit applied]*
+
+> **🔧 ✓ Running ` luac5.4 -p /home/timbos/src/Z1/e1/z1-lfo/main.lua /home/timbos/src/Z1/e1/z1-...`**
+
+I checked `roomi-fields/electraone-widgets` (`widgets/send-lfo/widget.lua` and `lib/primitives/graph.lua`) and built the **LFO 1–4** preset in `z1-lfo` with custom waveform visualizer widgets for all 4 LFOs. It is uploaded to **Bank 2, Slot 3** (`--bank 1 --slot 2`) with **3/3 tests passing** on the Electra One.
+
+### Files Created
+- `preset.json` (34 controls covering all **56** Z1 LFO parameters + 4 custom waveform graph widgets)
+- `main.lua`
+- `main-tests.lua` — **3/3 test cases passing** on E1 firmware `v5.0.6`.
+
+### Layout & Custom Waveform Visualizers (`z1-lfo`)
+- **Top Section (`LFO 1 & LFO 2`, Control Set 1, Slots 1–12):**
+  - **LFO 1 (Left 3 columns):** `LFO1 Wave` (`Triangle 0` .. `Exp Saw Down`, 18 shapes), **`LFO1 Shape` (custom painted waveform graph)**, `LFO1 Freq` (`0..199`), `LFO1 KeySync` (`OFF / by TIMBRE / by VOICE`), `LFO1 FadeIn` (`0..99`), `LFO1 Offset` (`-50..+50`)
+  - **LFO 2 (Right 3 columns):** `LFO2 Wave`, **`LFO2 Shape` (custom painted waveform graph)**, `LFO2 Freq`, `LFO2 KeySync`, `LFO2 FadeIn`, `LFO2 Offset`
+- **Middle Section (`LFO 3 & LFO 4`, Control Set 2, Slots 13–24):**
+  - Same 6-slot layout for **LFO 3** (Left 3 columns) and **LFO 4** (Right 3 columns), each with its own **`LFO3 Shape` / `LFO4 Shape` custom waveform graph**.
+- **How the Custom Waveform Graph Works:**
+  - Draws the exact Z1 waveform for all **18 Z1 LFO shapes** (`Triangle 0/90`, `Tri Random`, `Sine`, `Saw Up/Down 0/180`, `Square`, `Random S/H`, `Random Vector`, `Step Tri 4/6`, `Step Saw 4/6`, `Exp Tri`, `Exp Saw Up/Down`).
+  - Live-updates when you turn **Wave**, **Fade In** (draws the fade-in envelope ramp at the start of the wave), or **Offset** (shifts the waveform up/down relative to the zero line).
+  - **Touch shortcut:** Tapping any of the 4 waveform graphs on the touchscreen highlights it in orange and automatically selects that LFO (`LFO 1..4`) in the bottom section!
+- **Bottom Section (`LFO 1..4 MIDI SYNC & MODULATION`, Control Set 3, Slots 25–34):**
+  - **Slot 25 (`LFO SELECT`):** Switches between `LFO 1`, `LFO 2`, `LFO 3`, and `LFO 4` (saving and restoring each LFO's values in memory).
+  - **Slots 26–34:** `MIDISync` (`OFF/ON`), `Sync Base` (`32nd` .. `2nd`), `Sync Time` (`1..16`), `FrqSrc 1`, `FrqInt 1`, `FrqSrc 2`, `FrqInt 2`, `Amp Src`, `Amp Int`.
+
+---
+
+## User
+
+*2026-11-07 19:12:35*
+
+please continue with the next page
+
+## Assistant (copilot/gemini-4-argon)
+
+---
+
+## User
+
+*2026-11-07 19:32:54*
+
+Can you make the mixer and the mix mod parameters in a MIX page?, 
+
+## Assistant (copilot/gemini-4-argon)
+
+---
+
+## User
+
+*2026-11-07 21:16:43*
+
+please update the INSTRUCTIONS with wat we have completed and what has changed in the plan.
+
+Please add that we do not have 36MB ram.  There should be a sysex to check howmuch ram we use. Needs to be investigated. 
+
+ProgramName and MultiSetName, PatternName,  should be parsed and displayed. Need to be found out how.
+
+There are also some CC's available and for better performane we should use them. 
+
+We should also find out howto make custom widgets. 
+
+The FX page we can include FX presets. That can be per FX and Per FX chain. We then add an abilty to save and recall those presets. These can be stored on disk/flash. 
+
+What is still open?
+
+## Assistant (copilot/gemini-4-argon)
+
+---
+
+## User
+
+*2026-11-07 21:19:44*
+
+https://app.electra.one/controls/v8dLYsyjUJOJpKQDbDm46nfsH0s2_Filter_Sel
+
+## Assistant (copilot/auto)
+
+---
+
+## User
+
+*2026-11-07 21:20:03*
+
+please update the INSTRUCTIONS with wat we have completed and what has changed in the plan.
+
+Please add that we do not have 36MB ram. There should be a sysex to check howmuch ram we use. Needs to be investigated.
+
+ProgramName and MultiSetName, PatternName, should be parsed and displayed. Need to be found out how.
+
+There are also some CC's available and for better performane we should use them.
+
+We should also find out howto make custom widgets.
+
+The FX page we can include FX presets. That can be per FX and Per FX chain. We then add an abilty to save and recall those presets. These can be stored on disk/flash.
+
+What is still open?
+
+## Assistant (copilot/auto)
+
+I’ll inspect the current instructions and the modules we’ve actually built, then update the plan so completed work, remaining investigations, and revised FX/name/RAM plans are accurate.
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/e1)**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/INSTRUCTIONS.md)**
+
+> **🔧 ✓ Searching for regex `Name|Program Name|Multi Name|Pattern Name|Mod.Source List|CC#|Control Change` (`Z1` · `Z1_MIDIimp/**`)**
+
+> **🔧 ✓ Reading memory [](file:///home/timbos/.config/Code/User/workspaceStorage/407c531e5f6f4b0fdcbba90069a34a40/GitHub.copilot-chat/memory-tool/memories/repo/z1-plan.md)**
+
+I’ll reconcile the plan with the actual OSC1, EG, filter, and LFO modules, then replace the outdated roadmap with completed work and explicit research items for memory, names, CCs, widgets, mixer, and FX presets.
+
+> **🔧 ✓ Tool call**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/e1)**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/INSTRUCTIONS.md#145-145), lines 145 to 157**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/Z1_SysEx.md)**
+
+> **🔧 ✓ Searching for regex `Program Name|Multi Set Name|Pattern Name|Name +\|` (`Z1` · `Z1_MIDIimp/**`)**
+
+> **🔧 ✓ Reading memory [](file:///home/timbos/.config/Code/User/workspaceStorage/407c531e5f6f4b0fdcbba90069a34a40/GitHub.copilot-chat/memory-tool/memories/NzI0M2U4OWQtYTZlNi00NTVkLThlMTQtNTJiZTk3NTY3YjRh/plan.md)**
+
+> **🔧 ✓ Searching for files matching `**/e1/z1-{osc1,eg,filter,lfo}/**`**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/INSTRUCTIONS.md)**
+
+> **🔧 ✓ Reading memory [](file:///home/timbos/.config/Code/User/workspaceStorage/407c531e5f6f4b0fdcbba90069a34a40/GitHub.copilot-chat/memory-tool/memories/repo/z1-plan.md)**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/e1/z1-osc1/main-tests.lua)**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/e1/z1-eg/main-tests.lua)**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/e1/z1-osc1/main.lua#1-1), lines 1 to 340**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/e1/z1-eg/main.lua)**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/e1/z1-filter/main.lua#1-1), lines 1 to 340**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/e1/z1-lfo/main.lua#1-1), lines 1 to 340**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/e1/z1-filter/main-tests.lua)**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/e1/z1-lfo/main-tests.lua)**
+
+> **🔧 ✓ Searching for regex `TODO|FIXME|XXX|onLoad|onReady|function on|function update|function .*Painter` (`**/e1/z1-{osc1,eg,filter,lfo}/main.lua`)**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/e1/z1-osc1/preset.json)**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/e1/z1-eg/preset.json)**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/e1/z1-filter/preset.json)**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/e1/z1-lfo/preset.json)**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/e1/z1-osc1/main.lua#700-700), lines 700 to 767**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/e1/z1-filter/main.lua#320-320), lines 320 to 468**
+
+> **🔧 ✓ Searching for files matching `**/e1/z1-{osc1,eg,filter,lfo}/*`**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/e1/z1-lfo/main.lua#390-390), lines 390 to 514**
+
+> **🔧 ✓ Tool call**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/e1)**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/INSTRUCTIONS.md#145-145), lines 145 to 157**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/Z1_SysEx.md)**
+
+> **🔧 ✓ Searching for regex `Program Name|Multi Set Name|Pattern Name|Name +\|` (`Z1` · `Z1_MIDIimp/**`)**
+
+> **🔧 ✓ Reading memory [](file:///home/timbos/.config/Code/User/workspaceStorage/407c531e5f6f4b0fdcbba90069a34a40/GitHub.copilot-chat/memory-tool/memories/NzI0M2U4OWQtYTZlNi00NTVkLThlMTQtNTJiZTk3NTY3YjRh/plan.md)**
+
+> **🔧 ✓ Searching for files matching `**/e1/z1-{osc1,eg,filter,lfo}/**`**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/INSTRUCTIONS.md)**
+
+> **🔧 ✓ Reading memory [](file:///home/timbos/.config/Code/User/workspaceStorage/407c531e5f6f4b0fdcbba90069a34a40/GitHub.copilot-chat/memory-tool/memories/repo/z1-plan.md)**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/e1/z1-osc1/main-tests.lua)**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/e1/z1-eg/main-tests.lua)**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/e1/z1-osc1/main.lua#1-1), lines 1 to 340**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/e1/z1-eg/main.lua)**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/e1/z1-filter/main.lua#1-1), lines 1 to 340**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/e1/z1-lfo/main.lua#1-1), lines 1 to 340**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/e1/z1-filter/main-tests.lua)**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/e1/z1-lfo/main-tests.lua)**
+
+> **🔧 ✓ Searching for regex `TODO|FIXME|XXX|onLoad|onReady|function on|function update|function .*Painter` (`**/e1/z1-{osc1,eg,filter,lfo}/main.lua`)**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/e1/z1-osc1/preset.json)**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/e1/z1-eg/preset.json)**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/e1/z1-filter/preset.json)**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/e1/z1-lfo/preset.json)**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/e1/z1-osc1/main.lua#700-700), lines 700 to 767**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/e1/z1-filter/main.lua#320-320), lines 320 to 468**
+
+> **🔧 ✓ Searching for files matching `**/e1/z1-{osc1,eg,filter,lfo}/*`**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/e1/z1-lfo/main.lua#390-390), lines 390 to 514**
+
+The existing roadmap is now stale: OSC1, EG, filter, and LFO modules exist, and EG/filter gained follow-up layout changes. I’m checking the actual parameter/name and E1 runtime documentation before replacing the roadmap with a status-based plan and concrete open investigations.
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/e1)**
+
+> **🔧 ✓ Fetching 2 resources**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/Z1_MIDIimp/MULT_PRM.TXT#1-1), lines 1 to 35**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/Z1_MIDIimp/PAT_PRM.TXT#1-1), lines 1 to 35**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/Z1_MIDIimp/Z1_MIDIimp.TXT#205-205), lines 205 to 320**
+
+The documentation confirms there is no verified total-RAM figure to quote: runtime telemetry reports free heap and Lua heap use, not physical capacity. Program, Multi, and Pattern names are each 16-byte fields in their respective parameter tables; I’m capturing the documentation update plan now, including the filter’s still-unverified latest behavior.
+
+> **🔧 ✓ Tool call**
+
+> **🔧 ✓ Tool call**
+
+> **🔧 ✓ Reading memory [](file:///home/timbos/.config/Code/User/workspaceStorage/407c531e5f6f4b0fdcbba90069a34a40/GitHub.copilot-chat/memory-tool/memories/NzI0M2U4OWQtYTZlNi00NTVkLThlMTQtNTJiZTk3NTY3YjRh/plan.md)**
+
+> **🔧 ✓ Updating memory file [](file:///home/timbos/.config/Code/User/workspaceStorage/407c531e5f6f4b0fdcbba90069a34a40/GitHub.copilot-chat/memory-tool/memories/NzI0M2U4OWQtYTZlNi00NTVkLThlMTQtNTJiZTk3NTY3YjRh/plan.md)**
+
+## Plan: Refresh Z1 Editor Instructions
+Update `INSTRUCTIONS.md` to reflect the current modular work, the requested MIX page, and the remaining investigations. This pass is documentation-only; existing reference links and local setup notes stay intact.
+
+**Steps**
+1. Replace the stale OSC1-only/full-layout roadmap with a clear status summary: OSC1, EG, and LFO are implemented; Filter remains pending fresh validation of its latest assigned-EG and 2BPF behavior.
+2. Record the last known E1 Lua test results: OSC1 5/5, EG 5/5, LFO 3/3. Keep these distinct from physical-Z1 verification. List MIX (mixer plus mix modulation) as the next unimplemented module, followed by OSC2, Sub/Noise, modulation matrix, FX, Common/Arp, and final dump parsing/synchronization.
+3. Correct the memory note: the earlier ~31.7 MB figure was free-heap telemetry, not total physical RAM. Document the runtime query `F0 00 21 45 02 7E F7` and distinguish free heap, peak use, and Lua heap reporting. Leave physical capacity as unverified.
+4. Add open investigations for parsing/displaying Program, Multi Set, and Pattern names; testing which Z1 controls can use CC/NRPN reliably and with what performance; documenting the custom-widget pattern already used for LFO waveforms; and designing persistent per-effect and FX-chain preset save/recall.
+5. Update hardware/testing notes to distinguish verified Z1 SysEx results in `Z1_SysEx.md` from E1 module tests, and reflect the `amidi`, `electraone-cli`, and chunked-upload workflow.
+
+**Key references**
+- Name fields: `PROG_PRM.TXT`, `MULT_PRM.TXT`, and `PAT_PRM.TXT` identify 16-character name fields at IDs 1–16. Exact dump offsets and text encoding still need verification.
+- CC/NRPN coverage: `Z1_MIDIimp.TXT`.
+- Module status and tests: `z1-osc1`, `z1-eg`, `z1-filter`, and `z1-lfo`.
+
+**Verification**
+1. Check that the revised Markdown labels completed, partial, and planned work accurately, especially Filter and MIX.
+2. Search for stale total-RAM claims and outdated module paths; confirm the runtime query, three name-field references, links, and setup notes remain.
+3. Re-run the Filter E1 tests before describing its latest behavior as complete. No code tests are needed for the documentation-only edit.
+
+The plan is saved in `/memories/session/plan.md`. I have not edited `INSTRUCTIONS.md` in this planning-only step.
+
+---
+
+## User
+
+*2026-11-07 21:23:12*
+
+Start implementation
+
+## Assistant (copilot/auto)
+
+I’ll turn the reviewed plan into an accurate current-state roadmap in `INSTRUCTIONS.md`, keeping its existing references and setup notes. First I’m checking the live file and any repository-specific editing guidance so the replacement stays consistent with the workspace.
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/INSTRUCTIONS.md)**
+
+> **🔧 ✓ Searching for files matching `Z1` · `**/AGENTS.md`**
+
+> **🔧 ✓ Searching for files matching `Z1` · `**/copilot-instructions.md`**
+
+> **🔧 ✓ Reading memory [](file:///home/timbos/.config/Code/User/workspaceStorage/407c531e5f6f4b0fdcbba90069a34a40/GitHub.copilot-chat/memory-tool/memories/NzI0M2U4OWQtYTZlNi00NTVkLThlMTQtNTJiZTk3NTY3YjRh/plan.md)**
+
+The live file matches the attached excerpt, including several now-false assumptions: the single combined mixer/filter module, revealable EG modulation, and the 31.7 MB “free RAM” capacity claim. I’m replacing only the plan and architecture sections, preserving the introductory references while documenting actual module status, verified telemetry, and open work.
+
+> **🔧 ✓ Tool call**
+
+```
+
+> *[Code edit applied]*
+
+```
+
+The new status and roadmap are in place, including the MIX page as next up and memory telemetry as free-heap reporting rather than RAM capacity. I’m now checking for contradictory leftovers, verifying the three name-field references and runtime query, and reviewing the Markdown diff before wrapping up.
+
+> **🔧 ✓ Running ` git diff -- INSTRUCTIONS.md`**
+
+> **🔧 ✓ Searching for regex ``31\.7 MB|36 MB|revealable EG|z1-mixer-filter|z1-lfo-amp|z1-sub-noise-mixer|<15 KB|expect `23`|reveal/edit`` (`**/INSTRUCTIONS.md`)**
+
+> **🔧 ✓ Searching for regex `Program Name|Multi Set Name|Pattern Name|F0 00 21 45 02 7E|persist\(table\)|z1-mix|passed 5/5|passed 3/3` (`**/INSTRUCTIONS.md`)**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/INSTRUCTIONS.md)**
+
+> **🔧 ✓ Running ` git diff -- INSTRUCTIONS.md`**
+
+> **🔧 ✓ Searching for regex ``31\.7 MB|36 MB|revealable EG|z1-mixer-filter|z1-lfo-amp|z1-sub-noise-mixer|<15 KB|expect `23`|reveal/edit`` (`**/INSTRUCTIONS.md`)**
+
+> **🔧 ✓ Searching for regex `Program Name|Multi Set Name|Pattern Name|F0 00 21 45 02 7E|persist\(table\)|z1-mix|passed 5/5|passed 3/3` (`**/INSTRUCTIONS.md`)**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/INSTRUCTIONS.md)**
+
+The checks confirm the old “36 MB” and obsolete module paths are gone, and the new roadmap contains the requested names, telemetry, and FX storage items. I found one stale setup sentence at the top still describing the old MIDI tools, so I’m correcting it to the actual `amidi`/Electra One workflow, then I’ll verify that line and the final diff.
+
+```
+
+> *[Code edit applied]*
+
+```
+
+> **🔧 ✓ Searching for regex `sendmidi|receivemidi|recievemidi|31\.7 MB free RAM|<15 KB out of|z1-mixer-filter|z1-lfo-amp|z1-sub-noise-mixer` (`**/INSTRUCTIONS.md`)**
+
+> **🔧 ✓ Searching for text ``Debian Linux and VS Code; Lua 5.4 and `luacheck` for development.`` (`**/INSTRUCTIONS.md`)**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/INSTRUCTIONS.md)**
+
+The follow-up check confirms the setup note now matches the tested toolchain; the only `sendmidi`/`receivemidi` mention is explicitly that they were not used. I’m doing a final whitespace check and checking the diff summary; this is documentation-only, so Lua tests would not exercise the change.
+
+> **🔧 ✓ Running ` git diff --check -- INSTRUCTIONS.md`**
+
+> **🔧 ✓ Reading [](file:///home/timbos/.config/Code/User/workspaceStorage/407c531e5f6f4b0fdcbba90069a34a40/GitHub.copilot-chat/chat-session-resources/7243e89d-a6e6-455d-8e14-52be97567b4a/call_dt4tlNsFU719nChjMoFwHTyE__vscode-1794011010918/content.txt#1-1), lines 1 to 55**
+
+The final whitespace check found a single extra blank line at the end of `INSTRUCTIONS.md`. I’m removing that trailing line and will rerun the same check.
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/INSTRUCTIONS.md#89-89), lines 89 to 102**
+
+```
+
+> *[Code edit applied]*
+
+```
+
+> **🔧 ✓ Running ` git diff --check -- INSTRUCTIONS.md`**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/INSTRUCTIONS.md#96-96), lines 96 to 103**
+
+The first cleanup left that trailing line in place, so I’m checking the exact end-of-file bytes before making one precise correction.
+
+> **🔧 ✓ Running ` tail -n 8 INSTRUCTIONS.md | sed -n l`**
+
+```
+
+> *[Code edit applied]*
+
+```
+
+> **🔧 ✓ Running ` git diff --check -- INSTRUCTIONS.md`**
+
+> **🔧 ✓ Running ` tail -n 4 INSTRUCTIONS.md | sed -n l`**
+
+> **🔧 ✓ Reading [](file:///home/timbos/src/Z1/INSTRUCTIONS.md#75-75), lines 75 to 107**
+
+The content is intact; the patch tool is preserving blank EOF lines despite the first cleanup. I’m narrowing the cleanup to the exact trailing lines, then I’ll stop once `git diff --check` is clean.
+
+```
+
+> *[Code edit applied]*
+
+```
+
+> **🔧 ✓ Running ` git diff --check -- INSTRUCTIONS.md`**
+
+> **🔧 ✓ Tool call**
+
+> **🔧 ✓ Running ` git diff --check -- INSTRUCTIONS.md`**
+
+> **🔧 ✓ Running ` tail -n 5 INSTRUCTIONS.md | sed -n l`**
+
+The EOF-only patch cannot distinguish the trailing blank lines in this file, so I’m using a whitespace-only normalization pass to remove them without touching the document content. I’ll immediately verify the diff and file ending.
+
+> **🔧 ✓ Running ` perl -0pi -e 's/\[ \\t\\r\\n\]\+\\z/\\n/' INSTRUCTIONS.md`**
+
+> **🔧 ✓ Running ` git diff --check -- INSTRUCTIONS.md`**
+
+> **🔧 ✓ Running ` tail -n 3 INSTRUCTIONS.md | sed -n l`**
+
+> **🔧 ✓ Searching for regex `` 36 MB free RAM|31\.7 MB free RAM|z1-mixer-filter|z1-lfo-amp|z1-sub-noise-mixer|revealable EG|expected `23` `` (`**/INSTRUCTIONS.md`)**
+
+Updated `INSTRUCTIONS.md` with the implemented module status and test counts, the Filter revalidation caveat, and MIX as the next unimplemented page. I also corrected the RAM wording, documented the runtime telemetry query, and added the name parsing, CC/NRPN, custom-widget, FX persistence, and dump-sync investigations. Existing references and setup notes are preserved.
+
+`git diff --check` passes. No Lua tests were run because this change only updates documentation.
 
 ---
 

@@ -1,0 +1,204 @@
+{
+  "schemaVersion": 3,
+  "presetVersion": 3,
+  "targetDevice": "mk2",
+  "id": "H8b2CThl7ps3BOzq93KH",
+  "name": "My Preset",
+  "description": "",
+  "brief": "",
+  "kind": "preset",
+  "lua": "-- >>> electra-control library: written by the Electra One editor, keep your own code above this line\n\n-- electra-control module MIXER 1.0.0 \"MIXER\"\nlocal __electraControl_MIXER = (function()\nlocal mixer = {}\n\n-- An eight-channel level control: one custom control across the whole\n-- knob area of a mini, every knob a channel. Each knob moves the value the\n-- preset assigned to it (ch1 to ch8), the bar under the knob shows it,\n-- and pressing a knob puts its channel back to its default.\n\nlocal CHANNELS = 8\nlocal GAP = 12\n\nlocal function levelOf(control, id)\n  local value = control:getValue(id)\n  if not value then return 0, 0, 1 end\n  local min, max = value:getMin(), value:getMax()\n  local level = value:isSet() and value:getValue() or min\n  if max <= min then return 0, level, max end\n  return (level - min) / (max - min), level, max\nend\n\nfunction mixer.onReady(control)\n  control:setPaintCallback(function(c)\n    local bounds = c:getBounds()\n    local w, h = bounds[WIDTH], bounds[HEIGHT]\n    local on = c:getColor()\n    local off = graphics.dim(on, 0.25)\n\n    local columnWidth = (w - GAP * (CHANNELS + 1)) // CHANNELS\n    local top = 22\n    local bottom = h - 26\n    local height = bottom - top\n\n    for i = 1, CHANNELS do\n      local fraction, level = levelOf(c, \"ch\" .. i)\n      local x = GAP + (i - 1) * (columnWidth + GAP)\n      local fill = math.floor(height * fraction + 0.5)\n\n      graphics.setColor(off)\n      graphics.drawRect(x, top, columnWidth, height)\n      graphics.setColor(on)\n      if fill > 0 then\n        graphics.fillRect(x, bottom - fill, columnWidth, fill)\n      end\n      graphics.print(x, 2, tostring(level), columnWidth, CENTER, BOLD, SMALL)\n      graphics.print(x, bottom + 6, \"CH \" .. i, columnWidth, CENTER, REGULAR, SMALL)\n    end\n  end)\n\n  -- event.valueId names the channel the knob that turned is assigned to.\n  control:setPotCallback(function(c, event)\n    if event.delta == 0 then return end\n    local v = c:getValue(event.valueId)\n    if not v then return end\n    local level = v:isSet() and v:getValue() or v:getMin()\n    v:setValue(level + event.delta)\n    c:repaint()\n  end)\n\n  control:setSwitchCallback(function(c, event)\n    if event.type ~= 1 then return end\n    local v = c:getValue(event.valueId)\n    if not v then return end\n    v:setValue(v:getDefault())\n    c:repaint()\n  end)\n\n  control:repaint()\nend\n\nreturn mixer\nend)()\n\n-- electra-control bind MIXER #1\ndo\n  local previous = preset.onReady\n  function preset.onReady(...)\n    if previous then previous(...) end\n    local ok, control\n    ok, control = pcall(controls.get, 1); if ok and control and __electraControl_MIXER.onReady then __electraControl_MIXER.onReady(control); control:repaint() end\n  end\nend\n\n-- <<< electra-control library\n",
+  "routerLua": "",
+  "devices": [
+    {
+      "id": 1,
+      "name": "MIDI Device 1",
+      "instrumentId": "generic-controls",
+      "port": 1,
+      "channel": 1
+    }
+  ],
+  "tiles": [
+    {
+      "id": "60b749ce-23a3-470f-adcd-a2d52c56d536",
+      "reference": 1,
+      "type": "custom",
+      "color": "F49500",
+      "name": "MIXER",
+      "values": [
+        {
+          "id": "ch1",
+          "defaultValue": 0,
+          "message": {
+            "type": "cc7",
+            "min": 0,
+            "max": 127,
+            "deviceId": 1,
+            "parameterNumber": 1
+          }
+        },
+        {
+          "id": "ch2",
+          "defaultValue": 0,
+          "message": {
+            "type": "cc7",
+            "min": 0,
+            "max": 127,
+            "deviceId": 1,
+            "parameterNumber": 2
+          }
+        },
+        {
+          "id": "ch3",
+          "defaultValue": 0,
+          "message": {
+            "type": "cc7",
+            "min": 0,
+            "max": 127,
+            "deviceId": 1,
+            "parameterNumber": 3
+          }
+        },
+        {
+          "id": "ch4",
+          "defaultValue": 0,
+          "message": {
+            "type": "cc7",
+            "min": 0,
+            "max": 127,
+            "deviceId": 1,
+            "parameterNumber": 4
+          }
+        },
+        {
+          "id": "ch5",
+          "defaultValue": 0,
+          "message": {
+            "type": "cc7",
+            "min": 0,
+            "max": 127,
+            "deviceId": 1,
+            "parameterNumber": 5
+          }
+        },
+        {
+          "id": "ch6",
+          "defaultValue": 0,
+          "message": {
+            "type": "cc7",
+            "min": 0,
+            "max": 127,
+            "deviceId": 1,
+            "parameterNumber": 6
+          }
+        },
+        {
+          "id": "ch7",
+          "defaultValue": 0,
+          "message": {
+            "type": "cc7",
+            "min": 0,
+            "max": 127,
+            "deviceId": 1,
+            "parameterNumber": 7
+          }
+        },
+        {
+          "id": "ch8",
+          "defaultValue": 0,
+          "message": {
+            "type": "cc7",
+            "min": 0,
+            "max": 127,
+            "deviceId": 1,
+            "parameterNumber": 8
+          }
+        }
+      ],
+      "visible": true,
+      "deviceId": 1,
+      "primaryValue": "ch1",
+      "inputs": [
+        {
+          "potId": 1,
+          "valueId": "ch1"
+        },
+        {
+          "potId": 2,
+          "valueId": "ch2"
+        },
+        {
+          "potId": 3,
+          "valueId": "ch3"
+        },
+        {
+          "potId": 4,
+          "valueId": "ch4"
+        },
+        {
+          "potId": 5,
+          "valueId": "ch5"
+        },
+        {
+          "potId": 6,
+          "valueId": "ch6"
+        },
+        {
+          "potId": 7,
+          "valueId": "ch7"
+        },
+        {
+          "potId": 8,
+          "valueId": "ch8"
+        }
+      ],
+      "library": {
+        "name": "MIXER",
+        "slug": "MIXER",
+        "version": "1.0.0"
+      },
+      "span": 5,
+      "vspan": 1
+    }
+  ],
+  "categories": [],
+  "layouts": [
+    {
+      "id": "mini-4x2",
+      "targetDevice": "mini",
+      "name": "Electra One Mini 4x2",
+      "slots": [],
+      "pages": {}
+    },
+    {
+      "id": "mk2-6x6",
+      "targetDevice": "mk2",
+      "name": "Electra One Mk2 6x6",
+      "slots": [
+        {
+          "id": 6,
+          "tile": {
+            "id": "0c915301-9025-4d19-b466-fb90c7f0a7ca",
+            "slotId": 6,
+            "type": "ref",
+            "tileId": "60b749ce-23a3-470f-adcd-a2d52c56d536"
+          }
+        }
+      ],
+      "pages": {
+        "1": {
+          "id": "1",
+          "name": "Page 1"
+        }
+      }
+    },
+    {
+      "id": "keyboard",
+      "targetDevice": "keyboard",
+      "name": "Electra One Keyboard",
+      "slots": [],
+      "pages": {}
+    }
+  ],
+  "firstPageId": 1
+}

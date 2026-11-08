@@ -1,0 +1,112 @@
+{
+  "schemaVersion": 3,
+  "presetVersion": 3,
+  "targetDevice": "mk2",
+  "id": "FOfpb03PwMDIPM1MaQ4F",
+  "name": "",
+  "description": "",
+  "brief": "",
+  "kind": "preset",
+  "lua": "-- >>> electra-control library: written by the Electra One editor, keep your own code above this line\n\n-- electra-control module Filter_Sel 1.0.0 \"Filter Sel\"\nlocal __electraControl_Filter_Sel = (function()\nlocal filter = {}\n\n-- A two-knob filter: the left knob is the cutoff, the right one the\n-- resonance, and the control draws the frequency response the two describe -\n-- a flat passband, a peak at the cutoff as tall as the resonance, and the\n-- roll-off after it. Pressing a knob puts its value back to its default.\n\nlocal STEP = 2          -- pixels between two points of the curve\n\n-- Where a value sits in its range, 0 to 1, and the number itself.\nlocal function fractionOf(control, id)\n  local value = control:getValue(id)\n  if not value then return 0, 0 end\n  local min, max = value:getMin(), value:getMax()\n  local level = value:isSet() and value:getValue() or min\n  if max <= min then return 0, level end\n  return (level - min) / (max - min), level\nend\n\nfunction filter.onReady(control)\n  control:setPaintCallback(function(c)\n    local bounds = c:getBounds()\n    local w, h = bounds[WIDTH], bounds[HEIGHT]\n    local cut, cutLevel = fractionOf(c, \"cutoff\")\n    local res, resLevel = fractionOf(c, \"resonance\")\n\n    local on = c:getColor()\n    local dimmed = graphics.dim(on, 0.3)\n\n    local top = 18                        -- the two numbers sit above the graph\n    local bottom = h - 4\n    local flat = top + (bottom - top) * 0.55   -- the passband line\n    local cx = 4 + cut * (w - 8)          -- the cutoff, as an x\n    local bump = res * (flat - top)       -- how far the peak rises above it\n    local bumpWidth = w * 0.12\n    local slope = (bottom - top) / (w * 0.2)   -- the roll-off, pixels down per pixel right\n\n    local function yAt(x)\n      local y\n      if x <= cx then\n        local d = (cx - x) / bumpWidth\n        y = flat - (d < 1 and bump * (1 - d) * (1 - d) or 0)\n      else\n        y = flat - bump + (x - cx) * slope\n      end\n      if y > bottom then y = bottom end\n      return y\n    end\n\n    graphics.setColor(dimmed)\n    graphics.drawLine(0, bottom, w - 1, bottom)\n    local marker = math.floor(cx + 0.5)\n    graphics.drawLine(marker, top, marker, bottom)\n\n    graphics.setColor(on)\n    local px, py = 0, yAt(0)\n    for x = STEP, w - 1, STEP do\n      local y = yAt(x)\n      graphics.drawLine(math.floor(px), math.floor(py + 0.5),\n                        math.floor(x), math.floor(y + 0.5))\n      px, py = x, y\n    end\n\n    graphics.print(4, 0, \"CUTOFF \" .. cutLevel, w // 2 - 4, LEFT, REGULAR, SMALL)\n    graphics.print(w // 2, 0, \"RESO \" .. resLevel, w // 2 - 4, RIGHT, REGULAR, SMALL)\n  end)\n\n  -- event.valueId names the value the preset assigned to the knob that\n  -- turned, so one callback serves both knobs.\n  control:setPotCallback(function(c, event)\n    if event.delta == 0 then return end\n    local v = c:getValue(event.valueId)\n    if not v then return end\n    local level = v:isSet() and v:getValue() or v:getMin()\n    v:setValue(level + event.delta)\n    c:repaint()\n  end)\n\n  control:setSwitchCallback(function(c, event)\n    if event.type ~= 1 then return end\n    local v = c:getValue(event.valueId)\n    if not v then return end\n    v:setValue(v:getDefault())\n    c:repaint()\n  end)\n\n  control:repaint()\nend\n\nreturn filter\nend)()\n\n-- electra-control bind Filter_Sel #1\ndo\n  local previous = preset.onReady\n  function preset.onReady(...)\n    if previous then previous(...) end\n    local ok, control\n    ok, control = pcall(controls.get, 1); if ok and control and __electraControl_Filter_Sel.onReady then __electraControl_Filter_Sel.onReady(control); control:repaint() end\n  end\nend\n\n-- <<< electra-control library\n",
+  "routerLua": "",
+  "devices": [
+    {
+      "id": 1,
+      "name": "MIDI Device 1",
+      "instrumentId": "generic-controls",
+      "port": 1,
+      "channel": 1
+    }
+  ],
+  "tiles": [
+    {
+      "id": "e604253f-44a2-43d4-9a3b-4fb1e1b44887",
+      "reference": 1,
+      "type": "custom",
+      "color": "F49500",
+      "name": "Filter Sel",
+      "values": [
+        {
+          "id": "cutoff",
+          "message": {
+            "type": "sysex",
+            "deviceId": 1,
+            "data": [],
+            "parameterNumber": 1,
+            "min": 0,
+            "max": 127
+          }
+        },
+        {
+          "id": "resonance",
+          "message": {
+            "type": "sysex",
+            "deviceId": 1,
+            "data": [],
+            "parameterNumber": 2,
+            "min": 0,
+            "max": 127
+          }
+        }
+      ],
+      "visible": true,
+      "deviceId": 1,
+      "primaryValue": "cutoff",
+      "inputs": [
+        {
+          "potId": 1,
+          "valueId": "cutoff"
+        },
+        {
+          "potId": 2,
+          "valueId": "resonance"
+        }
+      ],
+      "library": {
+        "name": "Filter Sel",
+        "slug": "Filter_Sel",
+        "version": "1.0.0"
+      },
+      "span": 2
+    }
+  ],
+  "categories": [],
+  "layouts": [
+    {
+      "id": "mini-4x2",
+      "targetDevice": "mini",
+      "name": "Electra One Mini 4x2",
+      "slots": [],
+      "pages": {}
+    },
+    {
+      "id": "mk2-6x6",
+      "targetDevice": "mk2",
+      "name": "Electra One Mk2 6x6",
+      "slots": [
+        {
+          "id": 6,
+          "tile": {
+            "id": "92f28e5f-d1b9-4194-907b-adf45b6a98ef",
+            "slotId": 6,
+            "type": "ref",
+            "tileId": "e604253f-44a2-43d4-9a3b-4fb1e1b44887"
+          }
+        }
+      ],
+      "pages": {
+        "1": {
+          "id": "1",
+          "name": "Page 1"
+        }
+      }
+    },
+    {
+      "id": "keyboard",
+      "targetDevice": "keyboard",
+      "name": "Electra One Keyboard",
+      "slots": [],
+      "pages": {}
+    }
+  ]
+}
