@@ -511,3 +511,51 @@ function preset.onReady()
     repaintAllShapes()
     info.setText("Z1 LFO 1-4 Ready")
 end
+
+function preset.onZ1Param(exId, paramId, z1Val)
+    if exId ~= 0 or paramId < 107 or paramId > 162 then return end
+    for cid, spec in pairs(STATIC_LFO_CTRL) do
+        if LFO_BASE[spec.lfo] + spec.off == paramId then
+            lfoState[spec.lfo][spec.field] = z1Val
+            local c = controls.get(cid)
+            if c then c:getValue("value"):updateValue(z1Val) end
+            local sc = preset.getControl(SHAPE_CTRL_ID[spec.lfo])
+            if sc then sc:repaint() end
+            return
+        end
+    end
+    for lfo = 1, 4 do
+        for cid, def in pairs(DYN_LFO_DEFS) do
+            if LFO_BASE[lfo] + def.off == paramId then
+                lfoState[lfo][cid] = z1Val
+                if lfo == selectedLfo then
+                    local c = controls.get(cid)
+                    if c then c:getValue("value"):updateValue(z1Val) end
+                end
+                return
+            end
+        end
+    end
+end
+
+function preset.onZ1Dump(params)
+    local p0 = params and params[0]
+    if not p0 then return end
+    for cid, spec in pairs(STATIC_LFO_CTRL) do
+        local pid = LFO_BASE[spec.lfo] + spec.off
+        if p0[pid] ~= nil then
+            lfoState[spec.lfo][spec.field] = p0[pid]
+            local c = controls.get(cid)
+            if c then c:getValue("value"):updateValue(p0[pid]) end
+        end
+    end
+    for lfo = 1, 4 do
+        for cid, def in pairs(DYN_LFO_DEFS) do
+            local pid = LFO_BASE[lfo] + def.off
+            if p0[pid] ~= nil then
+                lfoState[lfo][cid] = p0[pid]
+            end
+        end
+    end
+    updateLfoModControls()
+end

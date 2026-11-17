@@ -1037,7 +1037,98 @@ end
 
 function preset.onReady()
     suppressModelCallback = false
+    for _, cid in ipairs({ 3, 9 }) do
+        local c = controls.get(cid)
+        if c then c:getValue("value"):setOverlayId(OV.OCTAVE) end
+    end
+    for _, cid in ipairs({ 16, 22, 25, 27, 31, 33 }) do
+        local c = controls.get(cid)
+        if c then c:getValue("value"):setOverlayId(OV.MODSRC1) end
+    end
+    local c301 = controls.get(301)
+    if c301 then c301:getValue("value"):setOverlayId(OV.OSC1_TYPE) end
+    local c601 = controls.get(601)
+    if c601 then c601:getValue("value"):setOverlayId(OV.OSC2_TYPE) end
     applyOsc1Model(0)
     applyOsc2Model(0)
     info.setText("Z1 OSC Common Ready")
+end
+
+local function z1ValToIdx(ovId, z1Val)
+    if not ovId then return z1Val end
+    local ov = overlays.get(ovId)
+    if ov and ov.getIndexByValue then
+        local idx = ov:getIndexByValue(z1Val)
+        if idx ~= nil then return idx end
+    end
+    if ov and ov.getValueByIndex then
+        for i = 0, 63 do
+            local v = ov:getValueByIndex(i)
+            if v == nil then break end
+            if v == z1Val then return i end
+        end
+    end
+    return z1Val
+end
+
+function preset.onZ1Param(exId, paramId, z1Val)
+    if exId == 0 then
+        if paramId == 174 then
+            applyOsc1Model(z1Val)
+            return
+        elseif paramId == 188 then
+            applyOsc2Model(z1Val)
+            return
+        end
+        for cid, pid in pairs(CTRL_PARAM) do
+            if pid == paramId then
+                local c = controls.get(cid)
+                if c then c:getValue("value"):updateValue(z1Val) end
+            end
+        end
+    elseif exId == 1 or exId == 2 then
+        local models = (exId == 1) and OSC1_MODELS or OSC2_MODELS
+        local curModel = (exId == 1) and selectedOsc1Model or selectedOsc2Model
+        local defs = models[curModel] or {}
+        for _, def in ipairs(defs) do
+            if def.id == paramId then
+                local disp = (def.kind == "list") and z1ValToIdx(def.ov, z1Val) or z1Val
+                oscSaved[(exId << 11) | paramId] = disp
+                if exId == 1 then
+                    applyOsc1Model(selectedOsc1Model)
+                else
+                    applyOsc2Model(selectedOsc2Model)
+                end
+                return
+            end
+        end
+    end
+end
+
+function preset.onZ1Dump(params)
+    local p0 = params and params[0]
+    if not p0 then return end
+    for cid, pid in pairs(CTRL_PARAM) do
+        if p0[pid] ~= nil then
+            local c = controls.get(cid)
+            if c then c:getValue("value"):updateValue(p0[pid]) end
+        end
+    end
+    local osc1Type = p0[174] or selectedOsc1Model
+    local osc2Type = p0[188] or selectedOsc2Model
+    local p1 = params[1] or {}
+    for _, def in ipairs(OSC1_MODELS[osc1Type] or {}) do
+        if p1[def.id] ~= nil then
+            local disp = (def.kind == "list") and z1ValToIdx(def.ov, p1[def.id]) or p1[def.id]
+            oscSaved[(1 << 11) | def.id] = disp
+        end
+    end
+    local p2 = params[2] or {}
+    for _, def in ipairs(OSC2_MODELS[osc2Type] or {}) do
+        if p2[def.id] ~= nil then
+            local disp = (def.kind == "list") and z1ValToIdx(def.ov, p2[def.id]) or p2[def.id]
+            oscSaved[(2 << 11) | def.id] = disp
+        end
+    end
+    setOscModelsFromDump(osc1Type, osc2Type)
 end

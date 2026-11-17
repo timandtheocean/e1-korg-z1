@@ -849,7 +849,7 @@ function preset.onLoad()
     for ovId, items in pairs(ENUM_DEFS) do
         overlays.create(ovId, items)
     end
-    if type(recall) == "function" then
+    if type(recall) == "function" and (type(recallJson) ~= "function" or recallJson() ~= nil) then
         pcall(recall, fxPresetBank)
     end
 end
@@ -864,4 +864,79 @@ function preset.onReady()
     controls.get(12):getValue("value"):setOverlayId(OV.PRESET_ACT)
     applyFxLayout()
     info.setText("Z1 Effects Ready")
+end
+
+local function z1ValToIdx(ovId, z1Val)
+    if not ovId then return z1Val end
+    local ov = overlays.get(ovId)
+    if ov and ov.getIndexByValue then
+        local idx = ov:getIndexByValue(z1Val)
+        if idx ~= nil then return idx end
+    end
+    if ov and ov.getValueByIndex then
+        for i = 0, 63 do
+            local v = ov:getValueByIndex(i)
+            if v == nil then break end
+            if v == z1Val then return i end
+        end
+    end
+    return z1Val
+end
+
+function preset.onZ1Param(exId, paramId, z1Val)
+    if exId == 0 then
+        for cid, spec in pairs(STATIC_FX_TOP) do
+            if spec.id == paramId then
+                local disp = (spec.kind == "list") and z1ValToIdx(spec.ov, z1Val) or z1Val
+                if spec.unit ~= nil then
+                    fxUnitType[spec.unit] = z1Val
+                    if spec.unit == activeEditUnit then
+                        applyFxLayout()
+                    end
+                end
+                local c = controls.get(cid)
+                if c then c:getValue("value"):updateValue(disp) end
+                return
+            end
+        end
+    elseif exId >= 3 and exId <= 5 then
+        local unit = exId - 3
+        local defs = getUnitDefs(unit)
+        for _, def in ipairs(defs or {}) do
+            if def.id == paramId then
+                local disp = (def.kind == "list") and z1ValToIdx(def.ov, z1Val) or z1Val
+                fxSavedValues[unit][paramId] = disp
+                if unit == activeEditUnit then
+                    applyFxLayout()
+                end
+                return
+            end
+        end
+    end
+end
+
+function preset.onZ1Dump(params)
+    local p0 = params and params[0]
+    if not p0 then return end
+    for cid, spec in pairs(STATIC_FX_TOP) do
+        local z1Val = p0[spec.id]
+        if z1Val ~= nil then
+            local disp = (spec.kind == "list") and z1ValToIdx(spec.ov, z1Val) or z1Val
+            if spec.unit ~= nil then
+                fxUnitType[spec.unit] = z1Val
+            end
+            local c = controls.get(cid)
+            if c then c:getValue("value"):updateValue(disp) end
+        end
+    end
+    for unit = 0, 2 do
+        local exId = unit + 3
+        local pUnit = params[exId] or {}
+        for _, def in ipairs(getUnitDefs(unit) or {}) do
+            if pUnit[def.id] ~= nil then
+                fxSavedValues[unit][def.id] = (def.kind == "list") and z1ValToIdx(def.ov, pUnit[def.id]) or pUnit[def.id]
+            end
+        end
+    end
+    applyFxLayout()
 end

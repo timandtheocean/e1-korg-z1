@@ -456,3 +456,61 @@ function preset.onReady()
     end
     info.setText("Z1 Common & Arp Ready")
 end
+
+local function z1ValToIdx(ovId, z1Val)
+    if not ovId then return z1Val end
+    local ov = overlays.get(ovId)
+    if ov and ov.getIndexByValue then
+        local idx = ov:getIndexByValue(z1Val)
+        if idx ~= nil then return idx end
+    end
+    if ov and ov.getValueByIndex then
+        for i = 0, 63 do
+            local v = ov:getValueByIndex(i)
+            if v == nil then break end
+            if v == z1Val then return i end
+        end
+    end
+    return z1Val
+end
+
+function preset.onZ1Param(exId, paramId, z1Val)
+    if exId ~= 0 then return end
+    if paramId >= 1 and paramId <= 16 then
+        programNameChars[paramId] = z1Val & 0x7F
+        if paramId == selectedCharPos then
+            local charCtrl = controls.get(34)
+            if charCtrl then
+                suppressCharCallback = true
+                charCtrl:getValue("value"):updateValue(programNameChars[selectedCharPos])
+                suppressCharCallback = false
+            end
+        end
+        local dispCtrl = preset.getControl(35)
+        if dispCtrl then dispCtrl:repaint() end
+        return
+    end
+    for cid, spec in pairs(STATIC_COMMON_MAP) do
+        if spec.id == paramId then
+            local disp = (spec.kind == "list") and z1ValToIdx(spec.ov, z1Val) or z1Val
+            local c = controls.get(cid)
+            if c then c:getValue("value"):updateValue(disp) end
+        end
+    end
+end
+
+function preset.onZ1Dump(params, unpacked)
+    if unpacked then
+        setProgramNameFromDump(unpacked)
+    end
+    local p0 = params and params[0]
+    if not p0 then return end
+    for cid, spec in pairs(STATIC_COMMON_MAP) do
+        local z1Val = p0[spec.id]
+        if z1Val ~= nil then
+            local disp = (spec.kind == "list") and z1ValToIdx(spec.ov, z1Val) or z1Val
+            local c = controls.get(cid)
+            if c then c:getValue("value"):updateValue(disp) end
+        end
+    end
+end

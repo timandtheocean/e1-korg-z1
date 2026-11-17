@@ -146,6 +146,38 @@ local MOD_LABELS = {
 
 local selectedEg = 0
 
+-- Shared EG curve state (1..5: EG1..EG4, Amp EG) synced with z1-filter's Assigned Cutoff EG view
+egCurveSaved = _G.egCurveSaved or {}
+_G.egCurveSaved = egCurveSaved
+for egId = 1, 5 do
+    local isAmp = (egId == 5)
+    if not egCurveSaved[egId] then
+        egCurveSaved[egId] = {
+            start = 0,
+            l1 = isAmp and 99 or 0, r1 = 0,
+            l2 = isAmp and 99 or 0, r2 = 0,
+            l3 = isAmp and 99 or 0, r3 = 0,
+            l4 = 0,                 r4 = 0,
+        }
+    end
+end
+
+_G.onFilterEgCurveChanged = function(egId, handleId, val)
+    if handleId == "start" then
+        if egId >= 1 and egId <= 4 then
+            local c = controls.get(10 + egId)
+            if c then c:getValue("value"):updateValue(val) end
+        end
+    else
+        local c = controls.get(egId)
+        if c then
+            local vo = c:getValue(handleId)
+            if vo then vo:updateValue(val) end
+            c:repaint()
+        end
+    end
+end
+
 -- Per-EG saved modulation values in memory so switching EG1..EG4 restores each EG's values
 egModValues = {
     [0] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
@@ -199,11 +231,18 @@ function onEnvHandle(valueObject, value)
         return
     end
     local handleId = valueObject:getId()
+    local v = math.floor(value)
+    if egCurveSaved and egCurveSaved[ctrlId] then
+        egCurveSaved[ctrlId][handleId] = v
+    end
+    if _G.onSharedEgCurveChanged then
+        _G.onSharedEgCurveChanged(ctrlId)
+    end
     local paramId = eg.curve[handleId]
     if not paramId then
         return -- e.g. Amp EG l4 (Release Level is fixed at 0 on Z1)
     end
-    sendParamChange(0, paramId, math.floor(value))
+    sendParamChange(0, paramId, v)
 end
 
 -- Callback for Start Level faders 11..14 (EG1..EG4)
@@ -214,7 +253,15 @@ function onStartLevel(valueObject, value)
     if not eg or not eg.curve.start then
         return
     end
-    sendParamChange(0, eg.curve.start, math.floor(value))
+    local v = math.floor(value)
+    local egId = egIdx + 1
+    if egCurveSaved and egCurveSaved[egId] then
+        egCurveSaved[egId].start = v
+    end
+    if _G.onSharedEgCurveChanged then
+        _G.onSharedEgCurveChanged(egId)
+    end
+    sendParamChange(0, eg.curve.start, v)
 end
 
 -- Callback for dedicated Amp EG Modulation controls 21..30 (middle section, Control Set 2)
@@ -318,4 +365,84 @@ function preset.onReady()
         end
     end
     info.setText("Z1 Envelopes Ready")
+end
+
+local EG_HANDLES = { "l1", "r1", "l2", "r2", "l3", "r3", "l4", "r4" }
+
+function preset.onZ1Param(exId, paramId, z1Val)
+    if exId ~= 0 then return end
+    for egIdx = 0, 4 do
+        local eg = EGS[egIdx]
+        local egId = egIdx + 1
+        if eg.curve.start == paramId then
+            if egCurveSaved and egCurveSaved[egId] then egCurveSaved[egId].start = z1Val end
+            local sc = controls.get(10 + egId)
+            if sc then sc:getValue("value"):updateValue(z1Val) end
+            return
+        end
+        for _, h in ipairs(EG_HANDLES) do
+            if eg.curve[h] == paramId then
+                if egCurveSaved and egCurveSaved[egId] then egCurveSaved[egId][h] = z1Val end
+                local ec = controls.get(egId)
+                if ec then
+                    local vo = ec:getValue(h)
+                    if vo then vo:updateValue(z1Val) end
+                    ec:repaint()
+                end
+                return
+            end
+        end
+        for i = 1, 10 do
+            if eg.mod[i] == paramId then
+                egModValues[egIdx][i] = z1Val
+                if egIdx == 4 then
+                    local c = controls.get(20 + i)
+                    if c then c:getValue("value"):updateValue(z1Val) end
+                elseif egIdx == selectedEg then
+                    local c = controls.get(30 + i)
+                    if c then c:getValue("value"):updateValue(z1Val) end
+                end
+                return
+            end
+        end
+    end
+end
+
+function preset.onZ1Dump(params)
+    local p0 = params and params[0]
+    if not p0 then return end
+    for egIdx = 0, 4 do
+        local eg = EGS[egIdx]
+        local egId = egIdx + 1
+        if eg.curve.start and p0[eg.curve.start] ~= nil then
+            local v = p0[eg.curve.start]
+            if egCurveSaved and egCurveSaved[egId] then egCurveSaved[egId].start = v end
+            local sc = controls.get(10 + egId)
+            if sc then sc:getValue("value"):updateValue(v) end
+        end
+        local ec = controls.get(egId)
+        for _, h in ipairs(EG_HANDLES) do
+            local pid = eg.curve[h]
+            if pid and p0[pid] ~= nil then
+                local v = p0[pid]
+                if egCurveSaved and egCurveSaved[egId] then egCurveSaved[egId][h] = v end
+                if ec then
+                    local vo = ec:getValue(h)
+                    if vo then vo:updateValue(v) end
+                end
+            end
+        end
+        if ec then ec:repaint() end
+        for i = 1, 10 do
+            local pid = eg.mod[i]
+            if pid and p0[pid] ~= nil then
+                egModValues[egIdx][i] = p0[pid]
+                if egIdx == 4 then
+                    local c = controls.get(20 + i)
+                    if c then c:getValue("value"):updateValue(p0[pid]) end
+                end
+            end
+        end
+    end
+    updateEgModControls()
 end

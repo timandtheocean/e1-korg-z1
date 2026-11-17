@@ -126,17 +126,20 @@ EGS = {
 
 local HANDLES = { "l1", "r1", "l2", "r2", "l3", "r3", "l4", "r4" }
 
--- Saved curve values per EG (1..5) in memory so switching assigned EG restores its curve on the dx7envelope widget
-egCurveSaved = {}
+-- Saved curve values per EG (1..5) in memory (shared with z1-eg so edits on either page stay in sync)
+egCurveSaved = _G.egCurveSaved or {}
+_G.egCurveSaved = egCurveSaved
 for egId = 1, 5 do
     local isAmp = EGS[egId].isAmp
-    egCurveSaved[egId] = {
-        start = 0,
-        l1 = isAmp and 99 or 0, r1 = 0,
-        l2 = isAmp and 99 or 0, r2 = 0,
-        l3 = isAmp and 99 or 0, r3 = 0,
-        l4 = 0,                 r4 = 0,
-    }
+    if not egCurveSaved[egId] then
+        egCurveSaved[egId] = {
+            start = 0,
+            l1 = isAmp and 99 or 0, r1 = 0,
+            l2 = isAmp and 99 or 0, r2 = 0,
+            l3 = isAmp and 99 or 0, r3 = 0,
+            l4 = 0,                 r4 = 0,
+        }
+    end
 end
 
 -- Track Filter 1 & Filter 2 Type (0..4 index -> 1..5 Z1 value; index 4 = 2BPF)
@@ -149,13 +152,17 @@ local STATIC_PARAMS = {
     [3]  = { id = 260, kind = "list", ov = OV.EG_TARGET }, -- Filter EG Knob's Target (1..3)
     [6]  = { id = 261, kind = "list", ov = OV.FLT_TYPE, flt = 0 }, -- Filter 1 Type (1..5)
     [7]  = { id = 262, kind = "num" },                     -- Filter 1 Input Trim (0..99)
-    [8]  = { id = 263, kind = "num" },                     -- Filter 1 Cutoff (0..99)
-    [9]  = { id = 274, kind = "num" },                     -- Filter 1 Resonance (0..99)
     [10] = { id = 288, kind = "list", ov = OV.FLT_TYPE, flt = 1 }, -- Filter 2 Type (1..5)
     [11] = { id = 289, kind = "num" },                     -- Filter 2 Input Trim (0..99)
-    [12] = { id = 290, kind = "num" },                     -- Filter 2 Cutoff (0..99)
-    [13] = { id = 301, kind = "num" },                     -- Filter 2 Resonance (0..99)
 }
+
+-- Combined 2-slot Cutoff + Resonance Filter Graph widgets (Control 8 = Filter 1, Control 12 = Filter 2)
+local FILTER_GRAPH_PARAMS = {
+    [8]  = { flt = 0, label = "F1", cutoff = { id = 263, def = 50 }, resonance = { id = 274, def = 0 } },
+    [12] = { flt = 1, label = "F2", cutoff = { id = 290, def = 50 }, resonance = { id = 301, def = 0 } },
+}
+local FLT_TYPE_NAMES = { [0] = "LPF", [1] = "HPF", [2] = "BPF", [3] = "BRF", [4] = "2BPF" }
+local FLT_GRAPH_STEP = 4
 
 -- Per-Filter Dynamic Parameters (Filter 1 base = 264, Filter 2 base = 291; offset +27)
 -- Controls 21..32: Cutoff/Reso Mod & Key Track (always visible for selected Filter 1 / Filter 2)
@@ -272,12 +279,20 @@ function updateAssignedEgWidget(restoreValues)
 
     local lmin = eg.isAmp and 0 or -99
     if restoreValues then
+        for _, h in ipairs({ "l1", "l2", "l3", "l4" }) do
+            local vo = envCtrl:getValue(h)
+            if vo then
+                vo:getMessage():setRange(0, 99 - lmin)
+                vo:setRange(lmin, 99, (eg.isAmp and h ~= "l4") and 99 or 0, false)
+            end
+        end
         for _, h in ipairs(HANDLES) do
             local vo = envCtrl:getValue(h)
             if vo then
                 vo:updateValue(saved[h] or 0)
             end
         end
+        envCtrl:repaint()
     end
 
     if eg.curve.start then
@@ -291,13 +306,185 @@ function updateAssignedEgWidget(restoreValues)
     end
 end
 
+_G.onSharedEgCurveChanged = function(changedEgId)
+    if ready and getActiveFilterEgId() == changedEgId then
+        updateAssignedEgWidget(true)
+    end
+end
+
+local function repaintFilterWidget(fltIdx)
+    local cid = (fltIdx == 0) and 8 or 12
+    local c = controls.get(cid)
+    if c then
+        c:repaint()
+    end
+end
+
+local function fractionOfFilterVal(control, id)
+    local value = control:getValue(id)
+    if not value then return 0, 0 end
+    local min, max = value:getMin(), value:getMax()
+    local level = (value.isSet and value:isSet()) and value:getValue() or value:getValue() or value:getDefault() or min
+    if max <= min then return 0, level end
+    return (level - min) / (max - min), level
+end
+
+local function setupFilterWidget(cid)
+    local spec = FILTER_GRAPH_PARAMS[cid]
+    local ctrl = controls.get(cid)
+    if not spec or not ctrl then
+        return
+    end
+    local fltIdx = spec.flt
+
+    ctrl:setPaintCallback(function(c)
+        local bounds = c:getBounds()
+        local w, h = bounds[WIDTH], bounds[HEIGHT]
+        local cut, cutLevel = fractionOfFilterVal(c, "cutoff")
+        local res, resLevel = fractionOfFilterVal(c, "resonance")
+        local ftype = math.floor(tonumber(fltTypeIdx[fltIdx]) or 0)
+        if ftype < 0 or ftype > 4 then
+            ftype = 0
+        end
+
+        local on = c:getColor()
+        local dimmed = (graphics.dim) and graphics.dim(on, 0.3) or on
+
+        local top = 18
+        local bottom = h - 4
+        local flat = top + (bottom - top) * 0.55
+        local cx = 4 + cut * (w - 8)
+        local bump = res * (flat - top)
+        local bumpWidth = w * 0.12
+        local slope = (bottom - top) / (w * 0.2)
+
+        local function bpfY(x, center, r)
+            local ctr = center or cx
+            local pk = flat - r * (flat - top)
+            local bw = w * (0.14 - 0.08 * r)
+            local u = (x - ctr) / bw
+            local n2 = u * u
+            local gain = 1 / (1 + n2 * n2 * 0.65)
+            local y = bottom - (bottom - pk) * gain
+            if y > bottom then y = bottom end
+            return y
+        end
+
+        local cxB, resB = cx, 0
+        if ftype == 4 then
+            local saved = fltSavedValues[fltIdx] or {}
+            local cutBVal = saved[34] ~= nil and saved[34] or 50
+            local resBVal = saved[35] ~= nil and saved[35] or 0
+            cxB = 4 + (cutBVal / 99) * (w - 8)
+            resB = resBVal / 99
+        end
+
+        local function yAt(x)
+            local y
+            if ftype == 1 then
+                -- HPF (High Pass Filter)
+                if x < cx then
+                    y = flat - bump + (cx - x) * slope
+                else
+                    local d = (x - cx) / bumpWidth
+                    y = flat - (d < 1 and bump * (1 - d) * (1 - d) or 0)
+                end
+            elseif ftype == 2 then
+                -- BPF (Band Pass Filter)
+                y = bpfY(x, cx, res)
+            elseif ftype == 3 then
+                -- BRF (Band Reject / Notch Filter)
+                local bw = w * (0.13 - 0.08 * res)
+                local u = (x - cx) / bw
+                local n2 = u * u
+                local notch = 1 / (1 + n2 * n2)
+                y = flat + notch * (bottom - flat)
+            elseif ftype == 4 then
+                -- 2BPF (Dual Band Pass Filter: Band A + Band B)
+                y = math.min(bpfY(x, cx, res), bpfY(x, cxB, resB))
+            else
+                -- LPF (Low Pass Filter, ftype == 0)
+                if x <= cx then
+                    local d = (cx - x) / bumpWidth
+                    y = flat - (d < 1 and bump * (1 - d) * (1 - d) or 0)
+                else
+                    y = flat - bump + (x - cx) * slope
+                end
+            end
+            if y > bottom then y = bottom end
+            if y < top then y = top end
+            return y
+        end
+
+        graphics.setColor(dimmed)
+        graphics.drawLine(0, bottom, w - 1, bottom)
+        local marker = math.floor(cx + 0.5)
+        graphics.drawLine(marker, top, marker, bottom)
+        if ftype == 4 then
+            local markerB = math.floor(cxB + 0.5)
+            graphics.drawLine(markerB, top, markerB, bottom)
+        end
+
+        graphics.setColor(on)
+        local segStartX = 0
+        local prevX, prevY = 0, math.floor(yAt(0) + 0.5)
+        for x = FLT_GRAPH_STEP, w - 1, FLT_GRAPH_STEP do
+            local y = math.floor(yAt(x) + 0.5)
+            if y ~= prevY then
+                if prevX > segStartX then
+                    graphics.drawLine(segStartX, prevY, prevX, prevY)
+                end
+                graphics.drawLine(prevX, prevY, x, y)
+                segStartX = x
+                prevY = y
+            end
+            prevX = x
+        end
+        if prevX > segStartX then
+            graphics.drawLine(segStartX, prevY, prevX, prevY)
+        end
+
+        graphics.print(4, 0, spec.label .. " CUT " .. math.floor(cutLevel), 120, LEFT, REGULAR, SMALL)
+        graphics.print(116, 0, FLT_TYPE_NAMES[ftype] or "LPF", 80, CENTER, REGULAR, SMALL)
+        graphics.print(189, 0, "RESO " .. math.floor(resLevel), 120, RIGHT, REGULAR, SMALL)
+    end)
+
+    ctrl:setPotCallback(function(c, event)
+        if event.delta == 0 then return end
+        local v = c:getValue(event.valueId)
+        if not v then return end
+        local level = (v.isSet and v:isSet()) and v:getValue() or v:getValue() or v:getDefault() or v:getMin()
+        local clamped = math.max(v:getMin(), math.min(v:getMax(), level + event.delta))
+        if clamped == level then return end
+        v:setValue(clamped)
+    end)
+
+    ctrl:setSwitchCallback(function(c, event)
+        if event.type ~= 1 then return end
+        local v = c:getValue(event.valueId)
+        if not v then return end
+        local def = v:getDefault() or v:getMin()
+        local cur = (v.isSet and v:isSet()) and v:getValue() or v:getValue()
+        if cur == def then return end
+        v:setValue(def)
+    end)
+end
+
+local lastIs2Bpf = nil
+local lastGrpBLabel = nil
+
 -- Show Filter-B (2BPF) controls (33..43) ONLY when the selected filter's Type is 2BPF (index 4 / Z1 value 5)
-function updateFilterBVisibility()
+function updateFilterBVisibility(force)
     local is2Bpf = (fltTypeIdx[selectedFlt] == 4)
-    local label  = (selectedFlt == 0) and "FILTER 1" or "FILTER 2"
-    local grpB   = preset.getGroup(52)
+    local label  = ((selectedFlt == 0) and "FILTER 1" or "FILTER 2") .. " 2BPF BAND-B (DUAL BANDPASS)"
+    if not force and lastIs2Bpf == is2Bpf and lastGrpBLabel == label then
+        return
+    end
+    lastIs2Bpf = is2Bpf
+    lastGrpBLabel = label
+    local grpB = preset.getGroup(52)
     if grpB then
-        grpB:setLabel(label .. " 2BPF BAND-B (DUAL BANDPASS)")
+        grpB:setLabel(label)
         grpB:setVisible(is2Bpf)
     end
     for cid = 33, 43 do
@@ -305,26 +492,51 @@ function updateFilterBVisibility()
     end
 end
 
--- Callback for static top-section controls (1..3, 6..13)
+-- Callback for static top-section controls (1..3, 6..12)
 function onStaticFilter(valueObject, value)
-    local ctrlId = valueObject:getControl():getId()
+    local ctrl = valueObject:getControl()
+    local ctrlId = ctrl:getId()
+    local v = math.floor(value)
+
+    local gspec = FILTER_GRAPH_PARAMS[ctrlId]
+    if gspec then
+        local valSpec = gspec[valueObject:getId()]
+        if not valSpec then
+            return
+        end
+        sendParamChange(0, valSpec.id, v)
+        ctrl:repaint()
+        return
+    end
+
     local spec = STATIC_PARAMS[ctrlId]
     if not spec then
         return
     end
-    local v = math.floor(value)
-    if spec.flt ~= nil then
-        fltTypeIdx[spec.flt] = v
-        if spec.flt == selectedFlt then
-            window.stop()
-            updateFilterBVisibility()
-            window.resume()
-        end
+    if spec.kind == "list" and v < 0 then
+        return
     end
     local z1Val = v
     if spec.kind == "list" then
-        local ov = overlays.get(spec.ov)
-        z1Val = (ov and ov:getValueByIndex(v)) or v
+        local idx = v
+        local defs = ENUM_DEFS[spec.ov]
+        if valueObject.getMin and valueObject:getMin() == 1 and defs and defs[1] and defs[1].value == 1 then
+            idx = v - 1
+            z1Val = v
+        else
+            local ov = overlays.get(spec.ov)
+            z1Val = (defs and defs[idx + 1] and defs[idx + 1].value)
+                 or (ov and ov:getValueByIndex(idx))
+                 or v
+        end
+        if spec.flt ~= nil then
+            if idx < 0 then idx = 0 elseif idx > 4 then idx = 4 end
+            fltTypeIdx[spec.flt] = idx
+            if spec.flt == selectedFlt then
+                updateFilterBVisibility()
+            end
+            repaintFilterWidget(spec.flt)
+        end
     end
     sendParamChange(0, spec.id, z1Val)
 end
@@ -339,6 +551,9 @@ function onEg3Handle(valueObject, value)
     local handleId = valueObject:getId()
     local v = math.floor(value)
     egCurveSaved[egId][handleId] = v
+    if _G.onFilterEgCurveChanged then
+        _G.onFilterEgCurveChanged(egId, handleId, v)
+    end
 
     local paramId = eg.curve[handleId]
     if not paramId then
@@ -360,6 +575,9 @@ function onEgStartLevel(valueObject, value)
     end
     local v = math.floor(value)
     egCurveSaved[egId].start = v
+    if _G.onFilterEgCurveChanged then
+        _G.onFilterEgCurveChanged(egId, "start", v)
+    end
     sendParamChange(0, eg.curve.start, v)
 end
 
@@ -369,7 +587,6 @@ function updateFilterControls()
     local label  = (selectedFlt == 0) and "FILTER 1" or "FILTER 2"
     local saved  = fltSavedValues[selectedFlt]
 
-    window.stop()
     local grpMod = preset.getGroup(51)
     if grpMod then
         grpMod:setLabel(label .. " MOD & KEY TRACK")
@@ -386,7 +603,6 @@ function updateFilterControls()
 
     updateAssignedEgWidget(true)
     updateFilterBVisibility()
-    window.resume()
 end
 
 -- Callback for Control 20: Filter Target Selector (0 = Filter 1, 1 = Filter 2)
@@ -423,9 +639,9 @@ function onDynFilter(valueObject, value)
 
     -- When Cutoff Mod EG (control 21) changes, snap the dx7envelope widget to the newly assigned EG!
     if ctrlId == 21 then
-        window.stop()
         updateAssignedEgWidget(true)
-        window.resume()
+    elseif ctrlId == 34 or ctrlId == 35 then
+        repaintFilterWidget(selectedFlt)
     end
 
     local paramId = (selectedFlt == 0) and def.f1 or def.f2
@@ -454,6 +670,15 @@ function preset.onReady()
     controls.get(10):getValue("value"):setOverlayId(OV.FLT_TYPE)
     controls.get(20):getValue("value"):setOverlayId(OV.FLT_SELECT)
 
+    for cid, gspec in pairs(FILTER_GRAPH_PARAMS) do
+        local c = controls.get(cid)
+        if c then
+            c:getValue("cutoff"):updateValue(gspec.cutoff.def)
+            c:getValue("resonance"):updateValue(gspec.resonance.def)
+        end
+        setupFilterWidget(cid)
+    end
+
     for cid, def in pairs(DYN_DEFS) do
         fltSavedValues[0][cid] = def.defVal
         fltSavedValues[1][cid] = def.defVal
@@ -464,6 +689,139 @@ function preset.onReady()
     end
     updateAssignedEgWidget(false)
     updateFilterBVisibility()
+    repaintFilterWidget(0)
+    repaintFilterWidget(1)
     ready = true
     info.setText("Z1 Filter Ready")
+end
+
+local function z1ValToIdx(ovId, z1Val)
+    if not ovId then return z1Val end
+    local defs = ENUM_DEFS[ovId]
+    if type(defs) == "table" then
+        for i, item in ipairs(defs) do
+            if type(item) == "table" and item.value == z1Val then return i - 1 end
+        end
+    end
+    local ov = overlays.get(ovId)
+    if ov and ov.getIndexByValue then
+        local idx = ov:getIndexByValue(z1Val)
+        if idx ~= nil then return idx end
+    end
+    if ov and ov.getValueByIndex then
+        for i = 0, 63 do
+            local v = ov:getValueByIndex(i)
+            if v == nil then break end
+            if v == z1Val then return i end
+        end
+    end
+    return z1Val
+end
+
+local function syncEgCurveFromParams(p0)
+    for egId = 1, 5 do
+        local eg = EGS[egId]
+        local saved = egCurveSaved[egId]
+        if eg and saved then
+            if eg.curve.start and p0[eg.curve.start] ~= nil then
+                saved.start = p0[eg.curve.start]
+            end
+            for _, h in ipairs(HANDLES) do
+                local pid = eg.curve[h]
+                if pid and p0[pid] ~= nil then
+                    saved[h] = p0[pid]
+                end
+            end
+        end
+    end
+end
+
+function preset.onZ1Param(exId, paramId, z1Val)
+    if exId ~= 0 then return end
+    for cid, gspec in pairs(FILTER_GRAPH_PARAMS) do
+        if gspec.cutoff.id == paramId then
+            local c = controls.get(cid)
+            if c then
+                c:getValue("cutoff"):updateValue(z1Val)
+                c:repaint()
+            end
+            return
+        elseif gspec.resonance.id == paramId then
+            local c = controls.get(cid)
+            if c then
+                c:getValue("resonance"):updateValue(z1Val)
+                c:repaint()
+            end
+            return
+        end
+    end
+    for cid, spec in pairs(STATIC_PARAMS) do
+        if spec.id == paramId then
+            local disp = (spec.kind == "list") and z1ValToIdx(spec.ov, z1Val) or z1Val
+            if spec.flt ~= nil then
+                fltTypeIdx[spec.flt] = disp
+                repaintFilterWidget(spec.flt)
+            end
+            local c = controls.get(cid)
+            if c then c:getValue("value"):updateValue(disp) end
+            updateFilterBVisibility()
+            return
+        end
+    end
+    for cid, def in pairs(DYN_DEFS) do
+        if def.f1 == paramId or def.f2 == paramId then
+            local disp = (def.kind == "list") and z1ValToIdx(def.ov, z1Val) or z1Val
+            if def.f1 == paramId then
+                fltSavedValues[0][cid] = disp
+                if cid == 34 or cid == 35 then repaintFilterWidget(0) end
+            end
+            if def.f2 == paramId then
+                fltSavedValues[1][cid] = disp
+                if cid == 34 or cid == 35 then repaintFilterWidget(1) end
+            end
+            updateFilterControls()
+            return
+        end
+    end
+    syncEgCurveFromParams({ [paramId] = z1Val })
+    updateAssignedEgWidget(true)
+end
+
+function preset.onZ1Dump(params)
+    local p0 = params and params[0]
+    if not p0 then return end
+    for cid, gspec in pairs(FILTER_GRAPH_PARAMS) do
+        local c = controls.get(cid)
+        if c then
+            if p0[gspec.cutoff.id] ~= nil then
+                c:getValue("cutoff"):updateValue(p0[gspec.cutoff.id])
+            end
+            if p0[gspec.resonance.id] ~= nil then
+                c:getValue("resonance"):updateValue(p0[gspec.resonance.id])
+            end
+        end
+    end
+    for cid, spec in pairs(STATIC_PARAMS) do
+        local z1Val = p0[spec.id]
+        if z1Val ~= nil then
+            local disp = (spec.kind == "list") and z1ValToIdx(spec.ov, z1Val) or z1Val
+            if spec.flt ~= nil then
+                fltTypeIdx[spec.flt] = disp
+            end
+            local c = controls.get(cid)
+            if c then c:getValue("value"):updateValue(disp) end
+        end
+    end
+    for cid, def in pairs(DYN_DEFS) do
+        if p0[def.f1] ~= nil then
+            fltSavedValues[0][cid] = (def.kind == "list") and z1ValToIdx(def.ov, p0[def.f1]) or p0[def.f1]
+        end
+        if p0[def.f2] ~= nil then
+            fltSavedValues[1][cid] = (def.kind == "list") and z1ValToIdx(def.ov, p0[def.f2]) or p0[def.f2]
+        end
+    end
+    syncEgCurveFromParams(p0)
+    updateFilterControls()
+    repaintFilterWidget(0)
+    repaintFilterWidget(1)
 end

@@ -1,0 +1,536 @@
+{
+  "schemaVersion": 3,
+  "presetVersion": 3,
+  "targetDevice": "mk2",
+  "id": "hC7KOaeWv0nfahc7TQYj",
+  "name": "Korg Z1 Base",
+  "description": "",
+  "brief": "",
+  "kind": "preset",
+  "lua": "",
+  "routerLua": "",
+  "devices": [
+    {
+      "id": 1,
+      "name": "Korg Z1",
+      "port": 1,
+      "channel": 1,
+      "instrumentId": "generic-controls"
+    }
+  ],
+  "tiles": [
+    {
+      "id": "0472247d-b4f8-49b7-aa00-63f089cf38d8",
+      "reference": 1,
+      "type": "pad",
+      "name": "Handshake ID",
+      "color": "03A598",
+      "mode": "momentary",
+      "visible": true,
+      "span": 1,
+      "values": [
+        {
+          "id": "value",
+          "min": 0,
+          "max": 1,
+          "defaultValue": 0,
+          "function": "onHandshakeBtn",
+          "message": {
+            "type": "virtual",
+            "parameterNumber": 1,
+            "deviceId": 1,
+            "offValue": 0,
+            "onValue": 1
+          }
+        }
+      ],
+      "deviceId": 1,
+      "primaryValue": "value",
+      "importOrder": 0
+    },
+    {
+      "id": "f719909d-81a5-4fb4-885b-9a30bc5b39d7",
+      "reference": 2,
+      "type": "pad",
+      "name": "Patch Req 40H",
+      "color": "F49500",
+      "mode": "momentary",
+      "vis:qible": true,
+      "span": 1,
+      "values": [
+        {
+          "id": "value",
+          "min": 0,
+          "max": 1,
+          "defaultValue": 0,
+          "function": "onPatchRequestBtn",
+          "message": {
+            "type": "virtual",
+            "parameterNumber": 2,
+            "deviceId": 1,
+            "offValue": 0,
+            "onValue": 1
+          }
+        }
+      ],
+      "deviceId": 1,
+      "primaryValue": "value",
+      "importOrder": 1
+    },
+    {
+      "id": "6d0003b8-4f7b-4dad-8c5c-642f84a18e82",
+      "reference": 3,
+      "type": "custom",
+      "name": "Z1 Status",
+      "color": "03A598",
+      "visible": true,
+      "span": 2,
+      "values": [
+        {
+          "id": "value",
+          "min": 0,
+          "max": 127,
+          "defaultValue": 0,
+          "message": {
+            "type": "virtual",
+            "parameterNumber": 3,
+            "deviceId": 1,
+            "min": 0,
+            "max": 127
+          }
+        }
+      ],
+      "deviceId": 1,
+      "placement": {
+        "slotId": 8,
+        "span": 2,
+        "vspan": 0,
+        "inputs": null
+      },
+      "importOrder": 2
+    },
+    {
+      "id": "3ade02ca-21d6-4c24-8bf6-de7deb46915a",
+      "reference": 4,
+      "type": "pad",
+      "name": "Recover Backup",
+      "color": "D9534F",
+      "mode": "momentary",
+      "visible": true,
+      "values": [
+        {
+          "id": "value",
+          "min": 0,
+          "max": 1,
+          "defaultValue": 0,
+          "function": "onRecoverBackupBtn",
+          "message": {
+            "type": "virtual",
+            "parameterNumber": 4,
+            "deviceId": 1,
+            "offValue": 0,
+            "onValue": 1
+          }
+        }
+      ],
+      "deviceId": 1,
+      "primaryValue": "value",
+      "placement": {
+        "slotId": 10,
+        "span": 1,
+        "vspan": 0,
+        "bounds": [
+          687,
+          28,
+          146,
+          56
+        ]
+      },
+      "importOrder": 3
+    },
+    {
+      "id": "f8d5458a-d74f-444c-a4e6-ce90b7839de3",
+      "reference": 7,
+      "type": "pad",
+      "name": "Backup Now",
+      "color": "03A598",
+      "mode": "momentary",
+      "visible": true,
+      "values": [
+        {
+          "id": "value",
+          "min": 0,
+          "max": 1,
+          "defaultValue": 0,
+          "function": "onBackupNowBtn",
+          "message": {
+            "type": "virtual",
+            "parameterNumber": 7,
+            "deviceId": 1,
+            "offValue": 0,
+            "onValue": 1
+          }
+        }
+      ],
+      "deviceId": 1,
+      "primaryValue": "value",
+      "placement": {
+        "slotId": 11,
+        "span": 1,
+        "vspan": 0,
+        "bounds": [
+          854,
+          28,
+          146,
+          56
+        ]
+      },
+      "importOrder": 4
+    },
+    {
+      "id": "df0220e5-0dff-4e50-8082-0e8e9190f857",
+      "reference": 33,
+      "type": "fader",
+      "name": "Name Pos",
+      "color": "F49500",
+      "visible": true,
+      "span": 1,
+      "values": [
+        {
+          "id": "value",
+          "min": 1,
+          "max": 16,
+          "defaultValue": 1,
+          "function": "onNamePos",
+          "message": {
+            "type": "virtual",
+            "parameterNumber": 33,
+            "deviceId": 1,
+            "min": 0,
+            "max": 15
+          }
+        }
+      ],
+      "deviceId": 1,
+      "primaryValue": "value",
+      "importOrder": 5
+    },
+    {
+      "id": "02cd7ff8-947c-449f-991e-8ad8ab1042fc",
+      "reference": 34,
+      "type": "fader",
+      "name": "Name Char",
+      "color": "F49500",
+      "visible": true,
+      "span": 1,
+      "values": [
+        {
+          "id": "value",
+          "min": 32,
+          "max": 127,
+          "defaultValue": 73,
+          "function": "onNameChar",
+          "message": {
+            "type": "virtual",
+            "parameterNumber": 34,
+            "deviceId": 1,
+            "min": 0,
+            "max": 95
+          },
+          "formatter": "fmtAsciiChar"
+        }
+      ],
+      "deviceId": 1,
+      "primaryValue": "value",
+      "importOrder": 6
+    },
+    {
+      "id": "ac92cc2e-af70-4299-84da-750d089123ef",
+      "reference": 35,
+      "type": "custom",
+      "name": "Program Name",
+      "color": "529DEC",
+      "visible": true,
+      "span": 2,
+      "values": [
+        {
+          "id": "value",
+          "min": 0,
+          "max": 127,
+          "defaultValue": 0,
+          "message": {
+            "type": "virtual",
+            "parameterNumber": 35,
+            "deviceId": 1,
+            "min": 0,
+            "max": 127
+          }
+        }
+      ],
+      "deviceId": 1,
+      "placement": {
+        "slotId": 32,
+        "span": 2,
+        "vspan": 0,
+        "inputs": null
+      },
+      "importOrder": 7
+    },
+    {
+      "id": "42c9f5a1-c967-4668-a816-af7e733ca8d1",
+      "reference": 5,
+      "type": "pad",
+      "name": "Undo",
+      "color": "529DEC",
+      "mode": "momentary",
+      "visible": true,
+      "values": [
+        {
+          "id": "value",
+          "min": 0,
+          "max": 1,
+          "defaultValue": 0,
+          "function": "onUndoBtn",
+          "message": {
+            "type": "virtual",
+            "parameterNumber": 5,
+            "deviceId": 1,
+            "offValue": 0,
+            "onValue": 1
+          }
+        }
+      ],
+      "deviceId": 1,
+      "primaryValue": "value",
+      "placement": {
+        "slotId": 34,
+        "span": 1,
+        "vspan": 0,
+        "bounds": [
+          687,
+          208,
+          146,
+          56
+        ]
+      },
+      "importOrder": 8
+    },
+    {
+      "id": "5164ce48-bb1d-45c9-84dd-1b3b9611ce37",
+      "reference": 6,
+      "type": "pad",
+      "name": "Redo",
+      "color": "529DEC",
+      "mode": "momentary",
+      "visible": true,
+      "values": [
+        {
+          "id": "value",
+          "min": 0,
+          "max": 1,
+          "defaultValue": 0,
+          "function": "onRedoBtn",
+          "message": {
+            "type": "virtual",
+            "parameterNumber": 6,
+            "deviceId": 1,
+            "offValue": 0,
+            "onValue": 1
+          }
+        }
+      ],
+      "deviceId": 1,
+      "primaryValue": "value",
+      "placement": {
+        "slotId": 35,
+        "span": 1,
+        "vspan": 0,
+        "bounds": [
+          854,
+          208,
+          146,
+          56
+        ]
+      },
+      "importOrder": 9
+    },
+    {
+      "id": "9347ce5f-0586-4012-a5fa-dbf1d74eb0b1",
+      "reference": 50,
+      "type": "label",
+      "name": "Z1 HANDSHAKE, PATCH REQUEST & BACKUP RECOVERY",
+      "color": "03A598",
+      "span": 6,
+      "placement": {
+        "slotId": 0,
+        "span": 6,
+        "vspan": 0,
+        "bounds": [
+          14,
+          6,
+          996,
+          16
+        ]
+      },
+      "importOrder": 10
+    },
+    {
+      "id": "db8c4b66-3e77-49f1-8f6c-d3e97239b9a5",
+      "reference": 51,
+      "type": "label",
+      "name": "PROGRAM NAME (1~16) & SNAPSHOT UNDO / REDO",
+      "color": "529DEC",
+      "span": 6,
+      "placement": {
+        "slotId": 24,
+        "span": 6,
+        "vspan": 0,
+        "bounds": [
+          14,
+          186,
+          996,
+          16
+        ]
+      },
+      "importOrder": 11
+    }
+  ],
+  "categories": [],
+  "layouts": [
+    {
+      "id": "mini-4x2",
+      "targetDevice": "mini",
+      "name": "Electra One Mini 4x2",
+      "slots": [],
+      "pages": {}
+    },
+    {
+      "id": "mk2-6x6",
+      "targetDevice": "mk2",
+      "name": "Electra One Mk2 6x6",
+      "slots": [
+        {
+          "id": 0,
+          "tile": {
+            "id": "e073d06e-0be3-4f85-a1b4-9d9dc3544c8a",
+            "slotId": 0,
+            "type": "ref",
+            "tileId": "9347ce5f-0586-4012-a5fa-dbf1d74eb0b1"
+          }
+        },
+        {
+          "id": 6,
+          "tile": {
+            "id": "20172391-8d84-4348-9273-ab4fda06863b",
+            "slotId": 6,
+            "type": "ref",
+            "tileId": "0472247d-b4f8-49b7-aa00-63f089cf38d8"
+          }
+        },
+        {
+          "id": 7,
+          "tile": {
+            "id": "d8df7dec-485b-4a53-98da-d85dd5c7a009",
+            "slotId": 7,
+            "type": "ref",
+            "tileId": "f719909d-81a5-4fb4-885b-9a30bc5b39d7"
+          }
+        },
+        {
+          "id": 8,
+          "tile": {
+            "id": "5f887b87-5fd1-45f5-9572-d8e6a46d889d",
+            "slotId": 8,
+            "type": "ref",
+            "tileId": "6d0003b8-4f7b-4dad-8c5c-642f84a18e82"
+          }
+        },
+        {
+          "id": 10,
+          "tile": {
+            "id": "a83830ce-a2be-4cf4-bea1-e2fc967263f7",
+            "slotId": 10,
+            "type": "ref",
+            "tileId": "3ade02ca-21d6-4c24-8bf6-de7deb46915a"
+          }
+        },
+        {
+          "id": 11,
+          "tile": {
+            "id": "0cc7ca36-7698-4c87-b61c-d1533d23c40f",
+            "slotId": 11,
+            "type": "ref",
+            "tileId": "f8d5458a-d74f-444c-a4e6-ce90b7839de3"
+          }
+        },
+        {
+          "id": 24,
+          "tile": {
+            "id": "36057c23-8e40-4811-901e-d73fb14d929a",
+            "slotId": 24,
+            "type": "ref",
+            "tileId": "db8c4b66-3e77-49f1-8f6c-d3e97239b9a5"
+          }
+        },
+        {
+          "id": 30,
+          "tile": {
+            "id": "64ef2288-7a57-4805-b261-f324a73f6979",
+            "slotId": 30,
+            "type": "ref",
+            "tileId": "df0220e5-0dff-4e50-8082-0e8e9190f857"
+          }
+        },
+        {
+          "id": 31,
+          "tile": {
+            "id": "39e5d433-42cc-40ee-b16e-ff7a1a592109",
+            "slotId": 31,
+            "type": "ref",
+            "tileId": "02cd7ff8-947c-449f-991e-8ad8ab1042fc"
+          }
+        },
+        {
+          "id": 32,
+          "tile": {
+            "id": "077c8794-6be8-49fc-96db-f7ca7b7bca0d",
+            "slotId": 32,
+            "type": "ref",
+            "tileId": "ac92cc2e-af70-4299-84da-750d089123ef"
+          }
+        },
+        {
+          "id": 34,
+          "tile": {
+            "id": "34bec703-8b6d-43e4-a6e4-b1359ca4674f",
+            "slotId": 34,
+            "type": "ref",
+            "tileId": "42c9f5a1-c967-4668-a816-af7e733ca8d1"
+          }
+        },
+        {
+          "id": 35,
+          "tile": {
+            "id": "d193b9e5-fbd1-4314-b0ad-bdc3937a0aaa",
+            "slotId": 35,
+            "type": "ref",
+            "tileId": "5164ce48-bb1d-45c9-84dd-1b3b9611ce37"
+          }
+        }
+      ],
+      "pages": {
+        "1": {
+          "id": "1",
+          "name": "Base: Handshake & Patch Name"
+        }
+      }
+    },
+    {
+      "id": "keyboard",
+      "targetDevice": "keyboard",
+      "name": "Electra One Keyboard",
+      "slots": [],
+      "pages": {}
+    }
+  ]
+}

@@ -1,3 +1,15 @@
+# presets are in schema verson 2
+the need to be updated to v3.
+
+See: https://docs.electra.one/developers/presetformat.html
+
+HARP2.4_mk2.epr is a v3 example.
+
+Can you inspect and make a script to transform the preset files that are in v2 to v3?
+
+
+
+
 # update
 - update INSTRUCTION.md keep a TODO there to so merge this:
 

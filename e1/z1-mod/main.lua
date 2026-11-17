@@ -188,8 +188,8 @@ OSC1_PITCH_DEFS = {
     { id = 177, name = "O1 Fine",     kind = "num",  min = -50,  max = 50,  color = ORANGE, defVal = 0 },
     { id = 178, name = "O1 Offset",   kind = "num",  min = -100, max = 100, fmt = "hz10",  color = ORANGE, defVal = 0 },
     { id = 179, name = "O1 CtrKey",   kind = "num",  min = 0,    max = 127, fmt = "note",  color = RED,    defVal = 60 },
-    { id = 180, name = "O1 LoSlope",  kind = "num",  min = -50,  max = 100, fmt = "slope", color = RED,    defVal = 50 },
-    { id = 181, name = "O1 HiSlope",  kind = "num",  min = -50,  max = 100, fmt = "slope", color = RED,    defVal = 50 },
+    { id = 180, name = "O1 LoSlope",  kind = "num",  min = -50,  max = 100, fmt = "slope", color = RED,    defVal = 0 },
+    { id = 181, name = "O1 HiSlope",  kind = "num",  min = -50,  max = 100, fmt = "slope", color = RED,    defVal = 0 },
     { id = 182, name = "O1 Mod1Src",  kind = "list", ov = OV.MODSRC1, color = BLUE,  defVal = 0 },
     { id = 183, name = "O1 Mod1Int",  kind = "num",  min = -99,  max = 99,  color = GREEN, defVal = 0 },
     { id = 184, name = "O1 M1Ctrl",   kind = "list", ov = OV.MODSRC1, color = BLUE,  defVal = 0 },
@@ -432,4 +432,66 @@ function preset.onReady()
     controls.get(12):getValue("value"):updateValue(0)
     applyModSection(0)
     info.setText("Z1 Amp/Out/Mod Ready")
+end
+
+local function z1ValToIdx(ovId, z1Val)
+    if not ovId then return z1Val end
+    local ov = overlays.get(ovId)
+    if ov and ov.getIndexByValue then
+        local idx = ov:getIndexByValue(z1Val)
+        if idx ~= nil then return idx end
+    end
+    if ov and ov.getValueByIndex then
+        for i = 0, 63 do
+            local v = ov:getValueByIndex(i)
+            if v == nil then break end
+            if v == z1Val then return i end
+        end
+    end
+    return z1Val
+end
+
+function preset.onZ1Param(exId, paramId, z1Val)
+    if exId ~= 0 then return end
+    for cid, spec in pairs(STATIC_AMP_MAP) do
+        if spec.id == paramId then
+            local disp = (spec.kind == "list") and z1ValToIdx(spec.ov, z1Val) or z1Val
+            local c = controls.get(cid)
+            if c then c:getValue("value"):updateValue(disp) end
+            return
+        end
+    end
+    for secIdx = 0, 5 do
+        for _, def in ipairs(DYN_SECTIONS[secIdx] or {}) do
+            if def.id == paramId then
+                local disp = (def.kind == "list") and z1ValToIdx(def.ov, z1Val) or z1Val
+                modSaved[def.id] = disp
+                if secIdx == selectedModSec then
+                    applyModSection(selectedModSec)
+                end
+                return
+            end
+        end
+    end
+end
+
+function preset.onZ1Dump(params)
+    local p0 = params and params[0]
+    if not p0 then return end
+    for cid, spec in pairs(STATIC_AMP_MAP) do
+        local z1Val = p0[spec.id]
+        if z1Val ~= nil then
+            local disp = (spec.kind == "list") and z1ValToIdx(spec.ov, z1Val) or z1Val
+            local c = controls.get(cid)
+            if c then c:getValue("value"):updateValue(disp) end
+        end
+    end
+    for secIdx = 0, 5 do
+        for _, def in ipairs(DYN_SECTIONS[secIdx] or {}) do
+            if p0[def.id] ~= nil then
+                modSaved[def.id] = (def.kind == "list") and z1ValToIdx(def.ov, p0[def.id]) or p0[def.id]
+            end
+        end
+    end
+    applyModSection(selectedModSec)
 end

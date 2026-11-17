@@ -305,3 +305,48 @@ function preset.onReady()
     repaintMixBuses(0)
     info.setText("Z1 Mixer Ready")
 end
+
+local function z1ValToIdx(ovId, z1Val)
+    if not ovId then return z1Val end
+    local ov = overlays.get(ovId)
+    if ov and ov.getIndexByValue then
+        local idx = ov:getIndexByValue(z1Val)
+        if idx ~= nil then return idx end
+    end
+    if ov and ov.getValueByIndex then
+        for i = 0, 63 do
+            local v = ov:getValueByIndex(i)
+            if v == nil then break end
+            if v == z1Val then return i end
+        end
+    end
+    return z1Val
+end
+
+function preset.onZ1Param(exId, paramId, z1Val)
+    if exId ~= 0 then return end
+    for cid, spec in pairs(MIX_CTRL_MAP) do
+        if spec.id == paramId then
+            mixState[spec.ch][spec.field] = z1Val
+            local disp = (spec.kind == "list") and z1ValToIdx(spec.ov, z1Val) or z1Val
+            local c = controls.get(cid)
+            if c then c:getValue("value"):updateValue(disp) end
+            repaintMixBuses(spec.bus)
+        end
+    end
+end
+
+function preset.onZ1Dump(params)
+    local p0 = params and params[0]
+    if not p0 then return end
+    for cid, spec in pairs(MIX_CTRL_MAP) do
+        local z1Val = p0[spec.id]
+        if z1Val ~= nil then
+            mixState[spec.ch][spec.field] = z1Val
+            local disp = (spec.kind == "list") and z1ValToIdx(spec.ov, z1Val) or z1Val
+            local c = controls.get(cid)
+            if c then c:getValue("value"):updateValue(disp) end
+        end
+    end
+    repaintMixBuses(0)
+end
