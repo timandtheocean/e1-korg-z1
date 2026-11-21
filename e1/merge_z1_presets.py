@@ -38,7 +38,7 @@ So this script merges BOTH files:
 The module sources are not modified; re-run the script after editing a module.
 
 Usage:
-  ./merge_z1_presets.py                     # writes preset.z1.json + main.z1.lua
+  ./merge_z1_presets.py                     # writes preset.z1.json + main.z1.lua (and copies both to ../dist/)
   ./merge_z1_presets.py --pretty            # indented JSON (default: minified)
   ./merge_z1_presets.py --check             # only analyse, write nothing
   ./merge_z1_presets.py --modules z1-base z1-eg ...   # custom module list / order
@@ -1197,6 +1197,8 @@ def main():
     ap.add_argument("--modules", nargs="+", default=DEFAULT_MODULES, help="modules in page order")
     ap.add_argument("-o", "--output", default="preset.z1.json", help="merged preset (default preset.z1.json)")
     ap.add_argument("--lua-output", default="main.z1.lua", help="merged Lua script (default main.z1.lua)")
+    ap.add_argument("--dist-dir", default=str(Path(__file__).resolve().parent.parent / "dist"),
+                    help="also copy the merged files here (default <repo>/dist; empty string disables)")
     ap.add_argument("--name", default="Korg Z1", help="preset name (max 20 chars)")
     ap.add_argument("--project-id", default=None, help="projectId (default: derived from module list)")
     ap.add_argument("--pretty", action="store_true", help="write indented JSON instead of minified")
@@ -1253,6 +1255,12 @@ def main():
     out.write_text(text, encoding="utf-8")
     lout.write_text(lua, encoding="utf-8")
     print("wrote %s and %s" % (out, lout))
+    if args.dist_dir:
+        dist = Path(args.dist_dir)
+        dist.mkdir(parents=True, exist_ok=True)
+        (dist / "preset.z1.json").write_text(text, encoding="utf-8")
+        (dist / "main.z1.lua").write_text(lua, encoding="utf-8")
+        print("copied to %s" % dist)
     return 0
 
 

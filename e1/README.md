@@ -12,6 +12,7 @@ Never edit [preset.z1.json](file:///home/timbos/src/Z1/e1/preset.z1.json) or [ma
 cd /home/timbos/src/Z1/e1
 
 # 1. Merge the 10 active z1-* modules into preset.z1.json + main.z1.lua
+#    (the same two files are also copied to ../dist/ for download)
 ./merge_z1_presets.py
 
 # 2. Check Lua 5.4 syntax of the generated script
