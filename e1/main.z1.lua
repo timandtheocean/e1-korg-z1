@@ -12,8 +12,8 @@ local __REAL = {}
 for _, n in ipairs({"preset", "controls", "groups", "overlays", "pages", "window", "midi", "timer", "events", "patch", "transport", "parameterMap"}) do __REAL[n] = _G[n] end
 local __realRecall = _G.recall
 
-local __ovPreloaded = 71 - 1 -- overlays 1..__ovPreloaded are already in preset.z1.json
-local __ovNext = 71          -- next free overlay id (overlays created only in Lua)
+local __ovPreloaded = 73 - 1 -- overlays 1..__ovPreloaded are already in preset.z1.json
+local __ovNext = 73          -- next free overlay id (overlays created only in Lua)
 local __ovCreated = {}              -- runtime-created overlay ids
 local __hookModules = {}            -- "table.key" -> list of module hook tables
 local __hookList = {}               -- ordered list of { tableName, key }
@@ -72,6 +72,35 @@ local function __trackOutgoingSysex(body)
         local signedVal = (val14 >= 0x2000) and (val14 - 0x4000) or val14
         _G.recordZ1ParamChange(exId, paramId, signedVal)
     end
+end
+
+function num(id, name, min, max, fmt, color)
+    return { id = id, name = name, kind = "num", min = min, max = max, fmt = fmt, color = color or WHITE }
+end
+
+function lst(id, name, ov, color)
+    local c = color or (ov == 1 and BLUE or PURPLE)
+    return { id = id, name = name, kind = "list", ov = ov, color = c }
+end
+
+function mint(id, name, min, max, fmt)
+    return num(id, name, min or -99, max or 99, fmt, GREEN)
+end
+
+function formatSlotValue(def, value)
+    local v = math.floor(value)
+    local fmt = def and def.fmt
+    if not fmt then return tostring(v)
+    elseif fmt == "dbhalf" then return string.format("%+.1f dB", v * 0.5)
+    elseif fmt == "db" then return string.format("%+d dB", v)
+    elseif fmt == "plus1" then return tostring(v + 1)
+    elseif fmt == "hz10" then return string.format("%+.1f Hz", v / 10.0)
+    elseif fmt == "slope" then return string.format("%+.2f", v / 50.0)
+    elseif fmt == "coarse" then return (v == 0) and "0.5" or tostring(v)
+    elseif fmt == "offneg" then return (v < 0) and "OFF" or tostring(v)
+    elseif fmt == "note" and _G.fmtNote then return _G.fmtNote(nil, v)
+    end
+    return tostring(v)
 end
 
 local function __makeEnv(modName, C, O, P)
@@ -176,6 +205,103 @@ local function __makeEnv(modName, C, O, P)
     end
     env.__OV = ov                       -- module overlay id -> merged overlay id
     env.__MODULE = modName
+    env.getGlobalChannel = function()
+        local dev = env.preset.getDevice(1)
+        if dev and dev.getChannel then
+            return (dev:getChannel() - 1) & 0x0F
+        end
+        return 0
+    end
+    env.sendParamChange = function(exId, paramId, signedVal)
+        local dev = env.preset.getDevice(1)
+        local body = env.buildParamChangeBody(exId, paramId, signedVal)
+        if dev then
+            dev:sendSysex(body)
+        else
+            env.midi.sendSysex(PORT_1, body)
+        end
+    end
+    env.z1ValToIdx = function(ovId, z1Val)
+        if not ovId then return z1Val end
+        local o = env.overlays.get(ovId)
+        if o and o.getIndexByValue then
+            local idx = o:getIndexByValue(z1Val)
+            if idx ~= nil then return idx end
+        end
+        if o and o.getValueByIndex then
+            for i = 0, 63 do
+                local v = o:getValueByIndex(i)
+                if v == nil then break end
+                if v == z1Val then return i end
+            end
+        end
+        return z1Val
+    end
+    env.applyDynamicSlots = function(defs, slotFrom, slotTo, slotOffset, faderBase, listBase, slotDefMap, saved, keyShift, suppress)
+        for slot = slotFrom, slotTo do
+            local def = defs[slot - slotOffset]
+            local fid = faderBase + slot
+            local tfid = faderBase + 50 + slot
+            local lid = listBase + slot
+            local fader = env.controls.get(fid)
+            local thin  = env.controls.get(tfid)
+            local list  = env.controls.get(lid)
+            if fader and list then
+                if not def then
+                    if fader:isVisible() then fader:setVisible(false) end
+                    if thin and thin:isVisible() then thin:setVisible(false) end
+                    if list:isVisible() then list:setVisible(false) end
+                elseif def.kind == "list" then
+                    slotDefMap[slot] = def
+                    if fader:isVisible() then fader:setVisible(false) end
+                    if thin and thin:isVisible() then thin:setVisible(false) end
+                    local key = keyShift and ((keyShift << 11) | def.id) or def.id
+                    local initVal = saved[key]
+                    if initVal == nil then initVal = def.defVal or 0 end
+                    local vo = list:getValue("value")
+                    vo:setOverlayId(ov(def.ov))
+                    if vo:getValue() ~= initVal then
+                        suppress[lid] = true
+                        vo:updateValue(initVal)
+                        suppress[lid] = nil
+                    end
+                    if list:getName() ~= def.name then list:setName(def.name) end
+                    local col = def.color or PURPLE
+                    if list:getColor() ~= col then list:setColor(col) end
+                    if not list:isVisible() then list:setVisible(true) end
+                else
+                    slotDefMap[slot] = def
+                    if list:isVisible() then list:setVisible(false) end
+                    local useThin = (thin ~= nil and def.name ~= nil and def.name:find("Int", 1, true) ~= nil)
+                    local activeFader = useThin and thin or fader
+                    local activeFid   = useThin and tfid or fid
+                    local otherFader  = useThin and fader or thin
+                    if otherFader and otherFader:isVisible() then otherFader:setVisible(false) end
+                    local key = keyShift and ((keyShift << 11) | def.id) or def.id
+                    local neutral = def.defVal
+                    if neutral == nil then
+                        neutral = (def.min < 0 and def.max > 0) and 0 or def.min
+                    end
+                    local initVal = saved[key]
+                    if initVal == nil then initVal = neutral end
+                    local vo = activeFader:getValue("value")
+                    if vo:getMin() ~= def.min or vo:getMax() ~= def.max or vo:getDefault() ~= neutral then
+                        vo:getMessage():setRange(0, def.max - def.min)
+                        vo:setRange(def.min, def.max, neutral, false)
+                    end
+                    if vo:getValue() ~= initVal then
+                        suppress[activeFid] = true
+                        vo:updateValue(initVal)
+                        suppress[activeFid] = nil
+                    end
+                    if activeFader:getName() ~= def.name then activeFader:setName(def.name) end
+                    local col = def.color or WHITE
+                    if activeFader:getColor() ~= col then activeFader:setColor(col) end
+                    if not activeFader:isVisible() then activeFader:setVisible(true) end
+                end
+            end
+        end
+    end
     return env
 end
 
@@ -192,22 +318,24 @@ end
 -- module z1-base  (prefix bs_)
 -- ==========================================================================
 local function __module_z1_base(_ENV)
--- Korg Z1 - Base & Utility Module for Electra One mk2
--- 1. Handshake routine (Universal Device Inquiry F0 7E 0g 06 01 F7 -> Z1 ID 42 46 00 01 00)
--- 2. Patch Request for Current Program Edit Buffer (F0 42 3g 46 10 00 F7 -> 40H Dump)
--- 3. Patch parsing for Program Name (IDs 1..16, 20H..7FH) with custom Program Name widget (Control 35)
--- 4. Automatic E1 Patch Backup & Recover from Backup (Control 4 / Control 7 + E1 Snapshot Bank 12 Slot 36)
--- 5. Snapshot-backed Undo / Redo Buffer (Controls 5 & 6 + E1 Snapshot Bank 12 Slots 1..16)
+
 
 local DEVICE_ID = 1
 
--- Dedicated Electra One Snapshot Bank & Slots for Undo/Redo and Pre-Request Backup
+local OV_SCALE_TARGET = 1
+local OV_KEY_SELECT   = 2
+
+local ENUM_DEFS = {}
+
+NOTE_NAMES = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" }
+
 SNAPSHOT_BANK         = 12
 BACKUP_SNAP_SLOT        = 36
 MAX_UNDO_SLOTS          = 16
-UNDO_IDLE_PERIOD_MS     = 1000 -- 1-second timer tick
-UNDO_IDLE_TIMEOUT_SEC   = 15   -- Save Undo snapshot only after 15 seconds of no user activity
-BACKUP_HOLD_TIMEOUT_SEC = 30   -- Keep pre-switch backup patch locked for 30 seconds after preset change
+UNDO_IDLE_PERIOD_MS     = 1000
+UNDO_IDLE_TIMEOUT_SEC   = 15
+BACKUP_HOLD_TIMEOUT_SEC = 30
+HANDSHAKE_RETRY_SEC     = 5
 local COLOUR_BACKUP     = 0xD9534F
 local COLOUR_UNDO       = 0x529DEC
 
@@ -242,10 +370,6 @@ local function copyByteArray(src)
     return dst
 end
 
--- ============================================================================
--- 1. Z1 Handshake State & Device Inquiry (F0 7E 0g 06 01 F7)
--- ============================================================================
-
 z1Status = {
     connected = false,
     channel   = 1,
@@ -265,21 +389,17 @@ function sendDeviceInquiry()
     info.setText("Sent Z1 Device Inquiry")
 end
 
--- ============================================================================
--- 2. Program Name State, Korg 7-to-8-bit Pack/Unpack & Patch Buffer
--- ============================================================================
-
-programNameChars = {
+programNameChars = _G.programNameChars or {
     0x49, 0x6E, 0x69, 0x74, 0x20, 0x50, 0x72, 0x6F,
     0x67, 0x72, 0x61, 0x6D, 0x20, 0x20, 0x20, 0x20,
-} -- Default: "Init Program    "
+}
+_G.programNameChars = programNameChars
 selectedCharPos = 1
 local suppressCharCallback = false
 
--- Current unpacked Z1 Program data buffer on the E1 (576 bytes when populated from a full 40H dump)
 currentUnpackedProgram = nil
 
-function getProgramNameString(charsTable)
+function getProgramNameString(charsTable, trim)
     local src = charsTable or programNameChars
     local chars = {}
     for i = 1, 16 do
@@ -289,11 +409,23 @@ function getProgramNameString(charsTable)
         end
         chars[i] = string.char(c)
     end
-    return table.concat(chars)
+    local s = table.concat(chars)
+    return trim and (s:gsub("%s+$", "")) or s
 end
 
--- Unpack Korg 7-to-8-bit packed MIDI bytes:
--- Every 8 MIDI bytes = [msbByte, d0, d1, d2, d3, d4, d5, d6] -> 7 unpacked 8-bit bytes.
+function setNameCharsBuffer(dst, src, maxAscii)
+    local hi = maxAscii or 0x7F
+    local isStr = (type(src) == "string")
+    local isTbl = (type(src) == "table")
+    for i = 1, 16 do
+        local b = isStr and string.byte(src, i) or (isTbl and src[i]) or 0x20
+        if type(b) ~= "number" or b < 0x20 or b > hi then
+            b = 0x20
+        end
+        dst[i] = b
+    end
+end
+
 function unpackKorgData(packedBytes, maxUnpacked)
     local out = {}
     local n = #packedBytes
@@ -316,8 +448,6 @@ function unpackKorgData(packedBytes, maxUnpacked)
     return out
 end
 
--- Pack 8-bit unpacked Z1 data bytes into Korg 7-to-8-bit MIDI format:
--- Every 7 unpacked bytes -> 8 MIDI bytes [msbByte, d0..d6] (576 unpacked -> 659 packed).
 function packKorgData(unpackedBytes)
     local out = {}
     local n = #unpackedBytes
@@ -342,7 +472,7 @@ end
 
 function buildParamChangeBody(exId, paramId, signedVal, gCh)
     if signedVal == nil then
-        -- 2-arg call: buildParamChangeBody(paramId, signedVal) with exId = 0
+
         signedVal = paramId
         paramId = exId
         exId = 0
@@ -373,18 +503,15 @@ function buildCurrentProgramDumpBody(unpackedBytes, gCh)
     return body
 end
 
--- ============================================================================
--- 3. Patch Backup & Snapshot-Backed Undo / Redo Buffer
--- ============================================================================
-
-patchBackup         = nil
-backupHoldSeconds   = 0
-undoStack           = {}
-undoCursor          = 0
-paramValues         = {}
-undoIdleSeconds     = 0
-undoPendingSnapshot = false
-timer               = timer or {}
+patchBackup           = nil
+backupHoldSeconds     = 0
+undoStack             = {}
+undoCursor            = 0
+paramValues           = {}
+undoIdleSeconds       = 0
+undoPendingSnapshot   = false
+handshakeRetrySeconds = 0
+timer                 = timer or {}
 
 local function hasSnapshotsApi()
     return type(_G.snapshots) == "table"
@@ -408,7 +535,7 @@ local function ensureOneSecondTimerRunning()
 end
 
 local function stopTimerIfIdle()
-    if not undoPendingSnapshot and backupHoldSeconds <= 0 then
+    if z1Status.connected and not undoPendingSnapshot and backupHoldSeconds <= 0 then
         if hasTimerApi() then
             _G.timer.disable()
         end
@@ -460,7 +587,6 @@ local function refreshStatusAndNameWidgets()
     end
 end
 
--- Apply a captured patch state to the E1 and optionally transmit it to the Korg Z1
 local function applyPatchState(state, transmitToZ1, snapshotSlot)
     if type(state) ~= "table" or type(state.nameChars) ~= "table" then
         return false
@@ -505,7 +631,6 @@ local function applyPatchState(state, transmitToZ1, snapshotSlot)
     return true
 end
 
--- Save current E1 patch state into the Backup slot (and E1 Snapshot Bank 12 Slot 36)
 function savePatchBackup(reason, skipSnapshotWrite)
     local label = reason or ("Bk:" .. string.sub(getProgramNameString(), 1, 12))
     patchBackup = captureCurrentPatchState(label)
@@ -516,12 +641,9 @@ function savePatchBackup(reason, skipSnapshotWrite)
     return patchBackup
 end
 
--- Lock the current patch into patchBackup for 30 seconds when switching presets.
--- If a preset switch is already inside the 30-second hold window, keep the original
--- pre-switch patchBackup and reset the 30-second countdown so the user has 30s to Recover.
 function beginPresetChangeBackup(reason)
     if backupHoldSeconds <= 0 then
-        savePatchBackup(reason)
+        savePatchBackup(reason, true)
     end
     backupHoldSeconds = BACKUP_HOLD_TIMEOUT_SEC
     ensureOneSecondTimerRunning()
@@ -529,7 +651,6 @@ function beginPresetChangeBackup(reason)
     return patchBackup
 end
 
--- Recover the backed-up patch on the E1 and transmit it back to the Z1 edit buffer
 function recoverPatchBackup()
     if not patchBackup then
         info.setText("No Patch Backup Available")
@@ -545,7 +666,6 @@ function recoverPatchBackup()
     return true
 end
 
--- Push a baseline patch state onto the Undo/Redo stack (e.g., on initial load or 40H dump).
 function pushUndoState(label, skipSnapshotWrite)
     while #undoStack > undoCursor do
         table.remove(undoStack)
@@ -576,7 +696,6 @@ function pushUndoState(label, skipSnapshotWrite)
     return undoCursor
 end
 
--- Commit the pending Undo entry to E1 Snapshot Bank 12 after 15 seconds of no user activity
 function flushPendingUndoSnapshot()
     local top = undoStack[undoCursor]
     if top then
@@ -597,10 +716,18 @@ function flushPendingUndoSnapshot()
 end
 
 function timer.onTick()
+    if not z1Status.connected then
+        handshakeRetrySeconds = handshakeRetrySeconds + 1
+        if handshakeRetrySeconds >= HANDSHAKE_RETRY_SEC then
+            handshakeRetrySeconds = 0
+            sendDeviceInquiry()
+        end
+    end
+
     if backupHoldSeconds > 0 then
         backupHoldSeconds = backupHoldSeconds - 1
         if backupHoldSeconds == 0 then
-            -- 30-second recovery window expired: promote current preset to Backup
+
             savePatchBackup("Auto 30s Backup")
             info.setText("Backup Updated: " .. getProgramNameString())
         else
@@ -621,13 +748,10 @@ function timer.onTick()
     stopTimerIfIdle()
 end
 
--- Record a user synth parameter change (ignores patch name IDs 1..16).
--- Consecutive ticks on the same (exId, paramId) coalesce into a single Undo step in RAM,
--- and the E1 snapshot is written only after 15 seconds of no user activity.
 function recordParamChange(exId, paramId, signedVal, ctrlId)
     local ex = (exId or 0) & 0x07
     local pid = paramId & 0x07FF
-    -- Patch Name characters (ExID 0, IDs 1..16) are NOT tracked in Undo/Redo
+
     if ex == 0 and pid >= 1 and pid <= 16 then
         return undoCursor
     end
@@ -642,17 +766,15 @@ function recordParamChange(exId, paramId, signedVal, ctrlId)
     if currentUnpackedProgram and encodeZ1ParamIntoDump then
         encodeZ1ParamIntoDump(currentUnpackedProgram, ex, pid, signedVal)
     end
-    -- When not inside a 30-second preset-switch hold window, keep patchBackup's bytes in sync with live edits
+
     if backupHoldSeconds <= 0 and patchBackup and patchBackup.unpackedBytes and encodeZ1ParamIntoDump then
         encodeZ1ParamIntoDump(patchBackup.unpackedBytes, ex, pid, signedVal)
     end
 
-    -- Discard any redo states ahead of undoCursor
     while #undoStack > undoCursor do
         table.remove(undoStack)
     end
 
-    -- Coalesce consecutive unsealed turns of the same parameter into the top Undo step
     local top = undoStack[undoCursor]
     if top and top.kind == "param" and top.id14 == id14 and not top.sealed then
         top.newVal = signedVal
@@ -701,7 +823,6 @@ function recordParamChange(exId, paramId, signedVal, ctrlId)
 end
 _G.recordZ1ParamChange = recordParamChange
 
--- Send a synth parameter change (41H) to the Z1 and record it in the Undo/Redo stack
 function sendParamChange(exId, paramId, signedVal, ctrlId)
     recordParamChange(exId, paramId, signedVal, ctrlId)
     _G.__z1InUndoRedo = true
@@ -734,8 +855,6 @@ local function applyParamUndoEntry(entry, targetVal)
     refreshStatusAndNameWidgets()
 end
 
--- Reconstruct and apply the full patch state at undoStack[targetIdx] by starting from
--- the nearest preceding kind=="patch" entry and replaying all param entries up to targetIdx.
 local function applyReconstructedPatchAt(targetIdx)
     local baseIdx = nil
     for i = targetIdx, 1, -1 do
@@ -813,10 +932,6 @@ function redoPatch()
     return true
 end
 
--- ============================================================================
--- 4. Current Program Edit Buffer Dump Request (F0 42 3g 46 10 00 F7)
--- ============================================================================
-
 function buildCurrentProgramDumpRequestBody(gCh)
     local g = gCh or getGlobalChannel()
     return { 0x42, 0x30 | (g & 0x0F), 0x46, 0x10, 0x00 }
@@ -832,66 +947,49 @@ function requestCurrentProgramDump()
     info.setText("Saved Backup & Requested 40H")
 end
 
--- ============================================================================
--- 5. Patch Dump Parsing (Device Inquiry Reply & Current Program Data Dump 40H)
--- ============================================================================
-
--- Populate Program Name from unpacked bytes 1..16 without echoing SysEx back to Z1
 function setProgramNameFromDump(unpackedBytes)
     if type(unpackedBytes) ~= "table" then
         return
     end
-    for i = 1, 16 do
-        local b = unpackedBytes[i]
-        if type(b) == "number" and b >= 0x20 and b <= 0x7F then
-            programNameChars[i] = b
-        else
-            programNameChars[i] = 0x20
-        end
-    end
+    setNameCharsBuffer(programNameChars, unpackedBytes, 0x7F)
     refreshStatusAndNameWidgets()
 end
 
--- ============================================================================
--- 5b. Full 576-Byte Program Parameter Decoder (PROG_PRM.TXT, ExIDs 0..5)
--- ============================================================================
-
 local OSC_MODEL_RANGES = {
-    [0]  = { 464, 485 }, -- Standard OSC (22B)
-    [1]  = { 486, 499 }, -- Comb Filter OSC (14B)
-    [2]  = { 500, 524 }, -- VPM OSC (25B)
-    [3]  = { 525, 556 }, -- Resonance OSC (32B)
-    [4]  = { 557, 565 }, -- Ring Mod.OSC (9B)
-    [5]  = { 566, 573 }, -- Cross Mod.OSC (8B)
-    [6]  = { 574, 576 }, -- Sync OSC (3B)
-    [7]  = { 577, 601 }, -- Organ Model (25B)
-    [8]  = { 602, 615 }, -- E. Piano Model (14B)
-    [11] = { 694, 724 }, -- Plucked String Model (31B)
-    [12] = { 725, 754 }, -- Bowed String Model (30B)
+    [0]  = { 464, 485 },
+    [1]  = { 486, 499 },
+    [2]  = { 500, 524 },
+    [3]  = { 525, 556 },
+    [4]  = { 557, 565 },
+    [5]  = { 566, 573 },
+    [6]  = { 574, 576 },
+    [7]  = { 577, 601 },
+    [8]  = { 602, 615 },
+    [11] = { 694, 724 },
+    [12] = { 725, 754 },
 }
 
 local FX12_MODEL_RANGES = {
-    [0]  = { 800, 818 }, -- Over Drive (19B)
-    [1]  = { 819, 827 }, -- Compressor (9B)
-    [2]  = { 828, 847 }, -- 4 Band PEQ (20B)
-    [3]  = { 848, 859 }, -- Wah (12B)
-    [4]  = { 860, 871 }, -- Exciter (12B)
-    [5]  = { 872, 881 }, -- Decimator (10B)
-    [9]  = { 932, 940 }, -- Small Rotary SP (9B)
-    [10] = { 941, 951 }, -- Delay (11B)
-    [11] = { 952, 962 }, -- Talking Modulator (11B)
-    [12] = { 963, 979 }, -- Multitap Delay (17B)
-    [13] = { 980, 989 }, -- Ensemble (10B)
-    [14] = { 990, 1003 },-- Rotary Speaker (14B)
+    [0]  = { 800, 818 },
+    [1]  = { 819, 827 },
+    [2]  = { 828, 847 },
+    [3]  = { 848, 859 },
+    [4]  = { 860, 871 },
+    [5]  = { 872, 881 },
+    [9]  = { 932, 940 },
+    [10] = { 941, 951 },
+    [11] = { 952, 962 },
+    [12] = { 963, 979 },
+    [13] = { 980, 989 },
+    [14] = { 990, 1003 },
 }
 
 local MFX_MODEL_RANGES = {
-    [0] = { 1004, 1017 }, -- Stereo Delay (14B)
-    [1] = { 1018, 1027 }, -- Reverb-Hall (10B)
-    [2] = { 1028, 1039 }, -- Reverb-Room (12B)
+    [0] = { 1004, 1017 },
+    [1] = { 1018, 1027 },
+    [2] = { 1028, 1039 },
 }
 
--- FX parameters whose max exceeds 127 (stored as unsigned 0..255 in dump)
 local UNSIGNED_FX_IDS = {
     [882]  = true, [900]  = true, [943]  = true,
     [966]  = true, [968]  = true, [1007] = true,
@@ -912,14 +1010,14 @@ local function decodeOscBlock(unpacked, b0, oscType, dst)
         for id = lo, hi do
             dst[id] = s8(b0 + (id - lo))
         end
-    elseif oscType == 9 then -- Brass Model (IDs 616..653, 37B)
+    elseif oscType == 9 then
         dst[616] = u8(b0 + 0)
         dst[617] = bits(b0 + 1, 0, 0x01)
         dst[618] = bits(b0 + 1, 1, 0x01)
         for id = 619, 653 do
             dst[id] = s8(b0 + (id - 617))
         end
-    elseif oscType == 10 then -- Reed Model (IDs 654..693, 38B)
+    elseif oscType == 10 then
         dst[654] = u8(b0 + 0)
         dst[655] = bits(b0 + 1, 0, 0x01)
         dst[656] = bits(b0 + 1, 1, 0x01)
@@ -948,21 +1046,21 @@ local function decodeFx12Block(unpacked, b0, fxType, dst)
             local idx = b0 + (id - lo)
             dst[id] = UNSIGNED_FX_IDS[id] and u8(idx) or s8(idx)
         end
-    elseif fxType == 6 then -- Chorus (IDs 882..899, 16B)
+    elseif fxType == 6 then
         dst[882] = u8(b0 + 0)
         for id = 883, 886 do dst[id] = s8(b0 + (id - 882)) end
         dst[887] = bits(b0 + 5, 7, 0x01)
         dst[888] = bits(b0 + 5, 4, 0x07)
         dst[889] = bits(b0 + 5, 0, 0x0F)
         for id = 890, 899 do dst[id] = s8(b0 + (id - 884)) end
-    elseif fxType == 7 then -- Flanger (IDs 900..915, 14B)
+    elseif fxType == 7 then
         dst[900] = u8(b0 + 0)
         for id = 901, 905 do dst[id] = s8(b0 + (id - 900)) end
         dst[906] = bits(b0 + 6, 7, 0x01)
         dst[907] = bits(b0 + 6, 4, 0x07)
         dst[908] = bits(b0 + 6, 0, 0x0F)
         for id = 909, 915 do dst[id] = s8(b0 + (id - 902)) end
-    elseif fxType == 8 then -- Phaser (IDs 916..931, 14B)
+    elseif fxType == 8 then
         for id = 916, 920 do dst[id] = s8(b0 + (id - 916)) end
         dst[921] = bits(b0 + 5, 7, 0x01)
         dst[922] = bits(b0 + 5, 4, 0x07)
@@ -984,7 +1082,7 @@ function decodeZ1ProgramDump(unpacked)
     local function bits(idx, shift, mask) return (u8(idx) >> shift) & mask end
 
     local p0 = params[0]
-    -- [Program Common] (Bytes 1..25, IDs 1..30)
+
     for i = 1, 16 do p0[i] = u8(i) end
     p0[17] = u8(17)
     p0[18] = u8(18)
@@ -1001,10 +1099,8 @@ function decodeZ1ProgramDump(unpacked)
     p0[29] = bits(24, 4, 0x0F)
     p0[30] = u8(25)
 
-    -- [EG1]..[EG4] (Bytes 26..101, IDs 31..106)
     for id = 31, 106 do p0[id] = s8(id - 5) end
 
-    -- [LFO1]..[LFO4] (Bytes 102..145, IDs 107..162)
     for lfo = 1, 4 do
         local b0  = 102 + (lfo - 1) * 11
         local id0 = 107 + (lfo - 1) * 14
@@ -1024,7 +1120,6 @@ function decodeZ1ProgramDump(unpacked)
         p0[id0 + 13] = bits(b0 + 10, 0, 0x0F)
     end
 
-    -- [OSC Common] (Bytes 146..154, IDs 163..173)
     p0[163] = s8(146)
     p0[164] = s8(147)
     p0[165] = bits(148, 0, 0x0F)
@@ -1037,28 +1132,23 @@ function decodeZ1ProgramDump(unpacked)
     p0[172] = u8(153)
     p0[173] = s8(154)
 
-    -- [OSC1] (Bytes 155..206: IDs 174..187 + 38B OSC1 Setting ExID 1)
     for id = 174, 187 do p0[id] = s8(id - 19) end
     decodeOscBlock(unpacked, 169, p0[174] or 0, params[1])
 
-    -- [OSC2] (Bytes 207..258: IDs 188..201 + 38B OSC2 Setting ExID 2)
     for id = 188, 201 do p0[id] = s8(id + 19) end
     decodeOscBlock(unpacked, 221, p0[188] or 0, params[2])
 
-    -- [SUB OSC], [Noise Generator], [Mixer] (Bytes 259..311, IDs 202..257)
     for id = 202, 253 do p0[id] = s8(id + 57) end
     p0[254] = bits(311, 0, 0x01)
     p0[255] = bits(311, 1, 0x01)
     p0[256] = bits(311, 2, 0x01)
     p0[257] = bits(311, 3, 0x01)
 
-    -- [Filter], [Filter 1], [Filter 2], [Amplitude], [Output] (Bytes 312..407, IDs 258..355)
     p0[258] = bits(312, 0, 0x03)
     p0[259] = bits(312, 2, 0x01)
     p0[260] = bits(312, 4, 0x03)
     for id = 261, 355 do p0[id] = s8(id + 52) end
 
-    -- [Effect] & [2 Band EQ] (Bytes 408..479, IDs 356..365 + FX1/FX2/MFX Settings ExIDs 3..5)
     p0[356] = u8(408)
     p0[357] = u8(409)
     p0[358] = s8(410)
@@ -1080,7 +1170,6 @@ function decodeZ1ProgramDump(unpacked)
     p0[364] = u8(478)
     p0[365] = s8(479)
 
-    -- [Controller] (Bytes 480..483, IDs 366..373)
     p0[366] = bits(480, 0, 0x7F)
     p0[367] = bits(480, 7, 0x01)
     p0[368] = bits(481, 0, 0x7F)
@@ -1090,7 +1179,6 @@ function decodeZ1ProgramDump(unpacked)
     p0[372] = bits(483, 0, 0x07)
     p0[373] = bits(483, 3, 0x01)
 
-    -- [Link Arpeggio] (Bytes 484..496, IDs 374..383)
     p0[374] = u8(484)
     p0[375] = bits(485, 0, 0x01)
     p0[376] = bits(485, 1, 0x01)
@@ -1102,7 +1190,6 @@ function decodeZ1ProgramDump(unpacked)
     p0[382] = u8(488)
     p0[383] = u8(489)
 
-    -- [PE Knob1]..[PE Knob5] (Bytes 497..576, IDs 384..463)
     for id = 384, 463 do p0[id] = u8(id + 113) end
 
     for ex = 0, 5 do
@@ -1117,12 +1204,12 @@ local function encodeOscBlock(unpacked, b0, oscType, id, val, setBits)
     local rng = OSC_MODEL_RANGES[oscType]
     if rng and id >= rng[1] and id <= rng[2] then
         unpacked[b0 + (id - rng[1])] = val & 0xFF
-    elseif oscType == 9 then -- Brass Model (IDs 616..653)
+    elseif oscType == 9 then
         if id == 616 then unpacked[b0] = val & 0xFF
         elseif id == 617 then setBits(b0 + 1, 0, 0x01, val)
         elseif id == 618 then setBits(b0 + 1, 1, 0x01, val)
         elseif id >= 619 and id <= 653 then unpacked[b0 + (id - 617)] = val & 0xFF end
-    elseif oscType == 10 then -- Reed Model (IDs 654..693)
+    elseif oscType == 10 then
         if id == 654 then unpacked[b0] = val & 0xFF
         elseif id == 655 then setBits(b0 + 1, 0, 0x01, val)
         elseif id == 656 then setBits(b0 + 1, 1, 0x01, val)
@@ -1138,19 +1225,19 @@ local function encodeFx12Block(unpacked, b0, fxType, id, val, setBits)
     local rng = FX12_MODEL_RANGES[fxType]
     if rng and id >= rng[1] and id <= rng[2] then
         unpacked[b0 + (id - rng[1])] = val & 0xFF
-    elseif fxType == 6 then -- Chorus (IDs 882..899)
+    elseif fxType == 6 then
         if id >= 882 and id <= 886 then unpacked[b0 + (id - 882)] = val & 0xFF
         elseif id == 887 then setBits(b0 + 5, 7, 0x01, val)
         elseif id == 888 then setBits(b0 + 5, 4, 0x07, val)
         elseif id == 889 then setBits(b0 + 5, 0, 0x0F, val)
         elseif id >= 890 and id <= 899 then unpacked[b0 + (id - 884)] = val & 0xFF end
-    elseif fxType == 7 then -- Flanger (IDs 900..915)
+    elseif fxType == 7 then
         if id >= 900 and id <= 905 then unpacked[b0 + (id - 900)] = val & 0xFF
         elseif id == 906 then setBits(b0 + 6, 7, 0x01, val)
         elseif id == 907 then setBits(b0 + 6, 4, 0x07, val)
         elseif id == 908 then setBits(b0 + 6, 0, 0x0F, val)
         elseif id >= 909 and id <= 915 then unpacked[b0 + (id - 902)] = val & 0xFF end
-    elseif fxType == 8 then -- Phaser (IDs 916..931)
+    elseif fxType == 8 then
         if id >= 916 and id <= 920 then unpacked[b0 + (id - 916)] = val & 0xFF
         elseif id == 921 then setBits(b0 + 5, 7, 0x01, val)
         elseif id == 922 then setBits(b0 + 5, 4, 0x07, val)
@@ -1242,7 +1329,6 @@ function encodeZ1ParamIntoDump(unpacked, exId, id, val)
     end
 end
 
--- Normalize a sysexBlock or raw Lua byte table into a 1-based byte accessor (without leading F0 / trailing F7)
 local function readSysexBodyBytes(sysexBlock, maxPayloadBytes)
     local bytes = {}
     if type(sysexBlock) == "table" and not sysexBlock.peek then
@@ -1278,15 +1364,13 @@ local function readSysexBodyBytes(sysexBlock, maxPayloadBytes)
     return bytes, (endIdx - startIdx + 1)
 end
 
--- Parse incoming SysEx messages (Device Inquiry Reply & Current Program Data Dump 40H)
 function parseSysexMessage(sysexBlock)
-    -- Read up to 700 body bytes so full 666-byte 40H dumps are captured completely for backup/recovery
+
     local body, totalBodyLen = readSysexBodyBytes(sysexBlock, 700)
     if #body < 5 then
         return false
     end
 
-    -- 1. Universal Device Inquiry Reply: 7E 0g 06 02 42 46 00 01 00 mnL mnM mjL mjM
     if body[1] == 0x7E and body[3] == 0x06 and body[4] == 0x02 and body[5] == 0x42 then
         local g = body[2] & 0x0F
         local family = (body[6] or 0) | ((body[7] or 0) << 7)
@@ -1299,22 +1383,22 @@ function parseSysexMessage(sysexBlock)
             z1Status.familyId  = family
             z1Status.memberId  = member
             z1Status.version   = string.format("v%d.%02d", major, minor)
+            handshakeRetrySeconds = 0
             local dev = preset.getDevice(DEVICE_ID)
             if dev and dev.setChannel then
                 dev:setChannel(z1Status.channel)
             end
+            stopTimerIfIdle()
             info.setText(string.format("Z1 Connected Ch%d %s", z1Status.channel, z1Status.version))
             refreshStatusAndNameWidgets()
             return true, "inquiry"
         end
     end
 
-    -- 2. Korg Z1 Current Program Data Dump (40H), Program Data Dump (4CH), or Parameter Change (41H)
     if body[1] == 0x42 and (body[2] & 0xF0) == 0x30 and body[3] == 0x46 then
         local func = body[4]
 
-        -- 2a. Program Parameter Change (41H): 42 3g 46 41 01 idL idM valL valM
-        if func == 0x41 and (body[5] == 0x01 or body[5] == 0x00) and #body >= 9 then
+        if func == 0x41 and body[5] == 0x01 and #body >= 9 then
             local id14 = (body[6] & 0x7F) | ((body[7] & 0x7F) << 7)
             local exId = (id14 >> 11) & 0x07
             local paramId = id14 & 0x07FF
@@ -1335,24 +1419,70 @@ function parseSysexMessage(sysexBlock)
             return true, "param_change"
         end
 
+        if func == 0x41 and body[5] == 0x00 and #body >= 9 then
+            local id14 = (body[6] & 0x7F) | ((body[7] & 0x7F) << 7)
+            local paramId = id14 & 0x07FF
+            local val14 = (body[8] & 0x7F) | ((body[9] & 0x7F) << 7)
+            local signedVal = (val14 >= 0x2000) and (val14 - 0x4000) or val14
+            if paramId >= 276 and paramId <= 287 then
+                userScale1[paramId - 276] = math.max(-100, math.min(100, signedVal))
+                if currentUnpackedGlobal then
+                    currentUnpackedGlobal[paramId - 10] = signedVal & 0xFF
+                end
+                refreshTuningWidgets()
+                return true, "global_param_change"
+            elseif paramId >= 288 and paramId <= 415 then
+                userScale2[paramId - 288] = math.max(-100, math.min(100, signedVal))
+                if currentUnpackedGlobal then
+                    currentUnpackedGlobal[paramId - 10] = signedVal & 0xFF
+                end
+                refreshTuningWidgets()
+                return true, "global_param_change"
+            end
+        end
+
+        if func == 0x51 and body[5] == 0x00 and #body >= 6 then
+            local payload = {}
+            for i = 6, #body do
+                payload[#payload + 1] = body[i]
+            end
+            local unpacked = unpackKorgData(payload, 416)
+            if #unpacked >= 405 then
+                currentUnpackedGlobal = unpacked
+                for k = 0, 11 do
+                    local b = unpacked[266 + k] or 0
+                    userScale1[k] = (b >= 128) and (b - 256) or b
+                end
+                for n = 0, 127 do
+                    local b = unpacked[278 + n] or 0
+                    userScale2[n] = (b >= 128) and (b - 256) or b
+                end
+                z1Status.lastDump = "51H Global"
+                refreshStatusAndNameWidgets()
+                refreshTuningWidgets()
+                info.setText("Loaded Z1 Global Tuning (51H)")
+                return true, "global_dump"
+            end
+        end
+
         local dataStart = nil
         if func == 0x40 then
             if body[5] == 0x01 or (body[5] == 0x00 and totalBodyLen >= 664) then
-                dataStart = 6 -- after 42 3g 46 40 01 (or 00)
+                dataStart = 6
             elseif totalBodyLen == 663 then
-                dataStart = 5 -- after 42 3g 46 40 (659 packed bytes directly)
+                dataStart = 5
             end
         elseif func == 0x4C then
-            dataStart = 8 -- after 42 3g 46 4C ub pp 00
+            dataStart = 8
         end
 
         if dataStart and #body >= dataStart then
             local hadFullPatch = (currentUnpackedProgram and #currentUnpackedProgram >= 576)
             if hadFullPatch then
-                -- Keep the previous patch locked in Backup for 30 seconds so the user can Recover
+
                 beginPresetChangeBackup("Pre-Dump Backup")
             else
-                savePatchBackup("Pre-Dump Backup")
+                savePatchBackup("Pre-Dump Backup", true)
             end
 
             local payload = {}
@@ -1360,9 +1490,6 @@ function parseSysexMessage(sysexBlock)
                 payload[#payload + 1] = body[i]
             end
 
-            -- Distinguish between:
-            -- (a) Direct 16-byte raw ASCII after header (e.g., 16 printable chars 20H..7FH in unit test)
-            -- (b) Standard Z1 Korg 7-to-8-bit packed dump (where payload[1] and payload[9] are MSB bitmask bytes = 0x00 for ASCII)
             local isRaw16Ascii = (#payload >= 16 and totalBodyLen == (dataStart - 1 + 16)
                 and payload[1] >= 0x20 and payload[9] >= 0x20)
             local unpacked
@@ -1379,18 +1506,19 @@ function parseSysexMessage(sysexBlock)
 
             currentUnpackedProgram = unpacked
             setProgramNameFromDump(unpacked)
+            info.setText("Patch: " .. getProgramNameString())
             if #unpacked >= 576 then
                 local params = decodeZ1ProgramDump(unpacked)
                 if _G.preset and type(_G.preset.onZ1Dump) == "function" then
                     _G.preset.onZ1Dump(params, unpacked)
                 end
                 if not hadFullPatch then
-                    -- First real 576-byte dump loaded: initialize patchBackup with this full patch
-                    savePatchBackup("Initial Patch Backup")
+
+                    savePatchBackup("Initial Patch Backup", true)
                 end
             end
-            pushUndoState("Dump:" .. getProgramNameString())
-            info.setText("Patch: " .. getProgramNameString())
+            pushUndoState("Dump:" .. getProgramNameString(), true)
+            refreshStatusAndNameWidgets()
             return true, "program_dump"
         end
     end
@@ -1402,20 +1530,32 @@ function midi.onSysex(_midiInput, sysexBlock)
     parseSysexMessage(sysexBlock)
 end
 
-function midi.onProgramChange(_midiInput, channel, _programNumber)
+autoPatchReqOnPc = true
+
+function onPcPatchReqToggle(_valueObject, value)
+    if suppressTune then return end
+    autoPatchReqOnPc = (math.floor(value) > 0)
+    z1PersistLib.autoPcReq = autoPatchReqOnPc
+    if type(persist) == "function" then pcall(persist, z1PersistLib) end
+    info.setText(autoPatchReqOnPc and "PC Patch Req: ON" or "PC Patch Req: OFF")
+end
+
+function midi.onProgramChange(_midiInput, channel, programNumber)
+    if not autoPatchReqOnPc then
+        return
+    end
     local gCh = (getGlobalChannel() & 0x0F) + 1
+    if not z1Status.connected and type(channel) == "number" and channel >= 1 and channel <= 16 then
+        gCh = channel
+    end
     if channel == nil or channel == gCh then
+        sendSysexBody(buildCurrentProgramDumpRequestBody(gCh - 1))
         if currentUnpackedProgram and #currentUnpackedProgram >= 576 then
             beginPresetChangeBackup("Pre-PC Backup")
         end
-        sendSysexBody(buildCurrentProgramDumpRequestBody())
-        info.setText("Z1 Program Change -> Req 40H (Bk Held 30s)")
+        info.setText(string.format("Z1 PC #%d -> Req 40H", (programNumber or 0) + 1))
     end
 end
-
--- ============================================================================
--- 6. Custom Paint Callbacks & Control Callbacks
--- ============================================================================
 
 function fmtAsciiChar(_valueObject, value)
     local v = math.floor(value)
@@ -1519,28 +1659,34 @@ function onRedoBtn(_valueObject, value)
     end
 end
 
-function onNamePos(_valueObject, value)
-    local pos = math.floor(value)
-    if pos < 1 then
-        pos = 1
-    elseif pos > 16 then
-        pos = 16
+function onNamePos(valueObject, value)
+    local pos = math.max(1, math.min(16, math.floor(value)))
+    local cid = valueObject and valueObject.getControl and __LID(valueObject:getControl():getId()) or 33
+    if cid == 17 then
+        tuneNamePos = pos
+        refreshTuningWidgets()
+        return
     end
     selectedCharPos = pos
     refreshStatusAndNameWidgets()
 end
 
-function onNameChar(_valueObject, value)
+function onNameChar(valueObject, value)
     if suppressCharCallback then
         return
     end
-    local ascii = math.floor(value)
-    if ascii < 0x20 then
-        ascii = 0x20
-    elseif ascii > 0x7F then
-        ascii = 0x7F
+    local ascii = math.max(0x20, math.min(0x7F, math.floor(value)))
+    local cid = valueObject and valueObject.getControl and __LID(valueObject:getControl():getId()) or 34
+    if cid == 18 then
+        if ascii > 0x7E then ascii = 0x20 end
+        tuneNameChars[tuneNamePos] = ascii
+        local kbdCtrl = preset.getControl(20)
+        if kbdCtrl then kbdCtrl:repaint() end
+        local listCtrl = preset.getControl(21)
+        if listCtrl then listCtrl:repaint() end
+        return
     end
-    -- Patch Name edits (IDs 1..16) are sent directly to the Z1 and do NOT push to Undo/Redo
+
     programNameChars[selectedCharPos] = ascii
     if currentUnpackedProgram then
         currentUnpackedProgram[selectedCharPos] = ascii
@@ -1552,12 +1698,620 @@ function onNameChar(_valueObject, value)
     end
 end
 
--- ============================================================================
--- 7. Lifecycle Hooks
--- ============================================================================
+TUNE_PRESET_SLOTS     = 16
+TUNE_PRESET_CTRL      = { 15, 16, 17, 18, 21, 22, 23, 25, 26 }
+userScale1            = {}
+userScale2            = {}
+for k = 0, 11 do userScale1[k] = 0 end
+for n = 0, 127 do userScale2[n] = 0 end
+
+currentUnpackedGlobal = nil
+selectedScaleTarget   = 0
+selectedTuneOctave    = 4
+selectedTuneKey       = 0
+tunePresetView        = false
+tunePresetSlot        = 1
+tuneNamePos           = 1
+tuneNameChars         = {}
+local pendingTuneDel  = nil
+local suppressTune    = false
+
+z1PersistLib = _G.z1PersistLib or { version = 2, unit = {}, chain = {}, tuning = {}, oscUnit = {}, oscDual = {} }
+_G.z1PersistLib = z1PersistLib
+z1PersistLib.tuning = z1PersistLib.tuning or {}
+z1PersistLib.oscUnit = z1PersistLib.oscUnit or {}
+z1PersistLib.oscDual = z1PersistLib.oscDual or {}
+
+local KEYBOARD_DEFAULT_LOW, KEYBOARD_DEFAULT_HIGH = 36, 96
+local KEYBOARD_IS_WHITE = {
+    [0] = true, [1] = false, [2] = true, [3] = false, [4] = true, [5] = true,
+    [6] = false, [7] = true, [8] = false, [9] = true, [10] = false, [11] = true,
+}
+
+local function keyboardNoteRange()
+    local low, high = KEYBOARD_DEFAULT_LOW, KEYBOARD_DEFAULT_HIGH
+    if selectedScaleTarget == 1 then
+        local active = (selectedTuneOctave + 1) * 12 + selectedTuneKey
+        if active < low then
+            low = active - (active % 12)
+            high = math.min(127, low + 60)
+        elseif active > high then
+            local r = active % 12
+            high = math.min(127, r == 0 and active or (active + 12 - r))
+            low = math.max(0, high - 60)
+            low = low - (low % 12)
+        end
+    end
+    return low, high
+end
+
+local function defaultTunePresetName(slot)
+    return string.format("Tuning %02d", slot)
+end
+
+setNameCharsBuffer(tuneNameChars, defaultTunePresetName(1), 0x7E)
+
+function buildGlobalDumpRequestBody(gCh)
+    local g = gCh or getGlobalChannel()
+    return { 0x42, 0x30 | (g & 0x0F), 0x46, 0x0E, 0x00 }
+end
+
+function buildGlobalParamChangeBody(paramId, signedVal, gCh)
+    local g = gCh or getGlobalChannel()
+    local id14 = paramId & 0x3FFF
+    local v14 = signedVal & 0x3FFF
+    return {
+        0x42,
+        0x30 | (g & 0x0F),
+        0x46,
+        0x41,
+        0x00,
+        id14 & 0x7F,
+        (id14 >> 7) & 0x7F,
+        v14 & 0x7F,
+        (v14 >> 7) & 0x7F,
+    }
+end
+
+function buildGlobalDataDumpBody(unpackedGlobal, gCh)
+    local g = gCh or getGlobalChannel()
+    local packed = packKorgData(unpackedGlobal)
+    local body = { 0x42, 0x30 | (g & 0x0F), 0x46, 0x51, 0x00 }
+    for i = 1, #packed do
+        body[#body + 1] = packed[i]
+    end
+    return body
+end
+
+local function getActiveMidiNote(semitone)
+    local k = semitone or selectedTuneKey
+    local note = (selectedTuneOctave + 1) * 12 + k
+    if note < 0 then return 0 elseif note > 127 then return 127 end
+    return note
+end
+
+function getKeyTuningCents(semitone)
+    local k = semitone or selectedTuneKey
+    if selectedScaleTarget == 0 then
+        return userScale1[k] or 0
+    end
+    return userScale2[getActiveMidiNote(k)] or 0
+end
+
+local function setKeyTuningCents(semitone, cents, sendToZ1)
+    local c = math.max(-100, math.min(100, math.floor(cents)))
+    if selectedScaleTarget == 0 then
+        userScale1[semitone] = c
+        if currentUnpackedGlobal then
+            currentUnpackedGlobal[266 + semitone] = c & 0xFF
+        end
+        if sendToZ1 then
+            sendSysexBody(buildGlobalParamChangeBody(276 + semitone, c))
+        end
+    else
+        local note = getActiveMidiNote(semitone)
+        userScale2[note] = c
+        if currentUnpackedGlobal then
+            currentUnpackedGlobal[278 + note] = c & 0xFF
+        end
+        if sendToZ1 then
+            sendSysexBody(buildGlobalParamChangeBody(288 + note, c))
+        end
+    end
+end
+
+local function tunePresetHeader()
+    return (selectedScaleTarget == 0)
+        and "USER SCALE 1 (12-NOTE) PRESETS (16)"
+        or "USER SCALE 2 (128-KEY) PRESETS (16)"
+end
+
+local lastGroup52Label = nil
+
+local function setGroup52Label(lbl)
+    if lbl == lastGroup52Label then return end
+    lastGroup52Label = lbl
+    local grp3 = preset.getGroup(52)
+    if grp3 then grp3:setLabel(lbl) end
+end
+
+local function updateKeyboardGroupHeader()
+    if tunePresetView then
+        setGroup52Label("TUNING PRESET LIBRARY - " .. tunePresetHeader())
+        return
+    end
+    local noteName = NOTE_NAMES[selectedTuneKey + 1] or "C"
+    if selectedScaleTarget == 0 then
+        setGroup52Label(string.format("TUNING KEYBOARD - USER SCALE 1 (1-OCTAVE) | KEY %s", noteName))
+    else
+        setGroup52Label(string.format("TUNING KEYBOARD - USER SCALE 2 (128-KEY) | KEY %s%d (#%d)",
+            noteName, selectedTuneOctave, getActiveMidiNote(selectedTuneKey)))
+    end
+end
+
+local function syncCtrlValue(cid, val)
+    local c = controls.get(cid)
+    if not c then return end
+    local vo = c:getValue("value")
+    if vo and vo:getValue() ~= val then
+        vo:updateValue(val)
+    end
+end
+
+function refreshTuningWidgets()
+    suppressTune = true
+    suppressCharCallback = true
+    syncCtrlValue(12, selectedTuneKey)
+    syncCtrlValue(13, getKeyTuningCents(selectedTuneKey))
+    local octCtrl = controls.get(11)
+    if octCtrl then
+        local vo = octCtrl:getValue("value")
+        if vo and vo:getValue() ~= selectedTuneOctave then
+            vo:updateValue(selectedTuneOctave)
+        end
+        local wantOctVis = (selectedScaleTarget == 1)
+        if octCtrl:isVisible() ~= wantOctVis then
+            octCtrl:setVisible(wantOctVis)
+        end
+    end
+    syncCtrlValue(10, selectedScaleTarget)
+    syncCtrlValue(26, selectedScaleTarget)
+    syncCtrlValue(14, tunePresetView and 1 or 0)
+    syncCtrlValue(25, tunePresetSlot)
+    syncCtrlValue(17, tuneNamePos)
+    syncCtrlValue(18, tuneNameChars[tuneNamePos] or 0x20)
+    suppressCharCallback = false
+    suppressTune = false
+    updateKeyboardGroupHeader()
+    if tunePresetView then
+        local listCtrl = preset.getControl(21)
+        if listCtrl then listCtrl:repaint() end
+    else
+        local kbdCtrl = preset.getControl(20)
+        if kbdCtrl then kbdCtrl:repaint() end
+    end
+end
+
+function setTunePresetView(on)
+    tunePresetView = on and true or false
+    pendingTuneDel = nil
+    window.stop()
+    local kbdCtrl = controls.get(20)
+    if kbdCtrl and kbdCtrl:isVisible() ~= (not tunePresetView) then
+        kbdCtrl:setVisible(not tunePresetView)
+    end
+    for _, cid in ipairs(TUNE_PRESET_CTRL) do
+        local c = controls.get(cid)
+        if c and c:isVisible() ~= tunePresetView then
+            c:setVisible(tunePresetView)
+        end
+    end
+    refreshTuningWidgets()
+    window.resume()
+end
+
+function requestGlobalTuningDump()
+    sendSysexBody(buildGlobalDumpRequestBody())
+    info.setText("Requested Z1 Global Tuning (0EH)")
+end
+
+function sendGlobalTuningTable()
+    if currentUnpackedGlobal and #currentUnpackedGlobal >= 416 then
+        for k = 0, 11 do
+            currentUnpackedGlobal[266 + k] = (userScale1[k] or 0) & 0xFF
+        end
+        for n = 0, 127 do
+            currentUnpackedGlobal[278 + n] = (userScale2[n] or 0) & 0xFF
+        end
+        sendSysexBody(buildGlobalDataDumpBody(currentUnpackedGlobal))
+        info.setText("Sent Z1 Global Dump (51H)")
+    elseif selectedScaleTarget == 0 then
+        for k = 0, 11 do
+            sendSysexBody(buildGlobalParamChangeBody(276 + k, userScale1[k] or 0))
+        end
+        info.setText("Sent User Scale 1 (12 Notes)")
+    else
+
+        local baseNote = math.max(0, math.min(116, (selectedTuneOctave + 1) * 12))
+        local sentCount = 0
+        for n = baseNote, math.min(127, baseNote + 11) do
+            sendSysexBody(buildGlobalParamChangeBody(288 + n, userScale2[n] or 0))
+            sentCount = sentCount + 1
+        end
+        for n = 0, 127 do
+            if (n < baseNote or n > baseNote + 11) and (userScale2[n] or 0) ~= 0 then
+                if sentCount >= 16 then break end
+                sendSysexBody(buildGlobalParamChangeBody(288 + n, userScale2[n]))
+                sentCount = sentCount + 1
+            end
+        end
+        info.setText(string.format("Sent User Scale 2 (%d Notes)", sentCount))
+    end
+end
+
+function fmtCents(_valueObject, value)
+    return string.format("%+d ct", math.floor(value))
+end
+
+function fmtScaleOctave(_valueObject, value)
+    local oct = math.floor(value)
+    return string.format("Oct %d (C%d)", oct, oct)
+end
+
+function fmtTunePresetSlot(_valueObject, value)
+    local s = math.floor(value)
+    local e = z1PersistLib.tuning["s" .. tostring(s)]
+    return string.format("%02d %s", s, (e and e.name) or "<empty>")
+end
+
+function paintTunePresetList(control)
+    local b = control:getBounds()
+    local w, h = b[WIDTH], b[HEIGHT]
+    graphics.setColor(0x18202C)
+    graphics.fillRect(0, 0, w, h)
+    graphics.setColor(0x03A598)
+    graphics.drawRect(0, 0, w, h)
+
+    graphics.setColor(ORANGE)
+    graphics.print(6, 3, tunePresetHeader(), w - 12, LEFT)
+
+    local chars = {}
+    for i = 1, 16 do
+        local ch = string.char(tuneNameChars[i] or 0x20)
+        chars[i] = (i == tuneNamePos) and ("[" .. ch .. "]") or ch
+    end
+    graphics.setColor(WHITE)
+    graphics.print(6, 21, "Name: " .. table.concat(chars), w - 12, LEFT)
+
+    local rows = 6
+    local first = math.max(1, math.min(tunePresetSlot - 2, TUNE_PRESET_SLOTS - rows + 1))
+    for r = 0, rows - 1 do
+        local s = first + r
+        if s > TUNE_PRESET_SLOTS then break end
+        local y = 40 + r * 17
+        local e = z1PersistLib.tuning["s" .. tostring(s)]
+        if s == tunePresetSlot then
+            graphics.setColor(0x03A598)
+            graphics.fillRect(2, y - 1, w - 4, 17)
+            graphics.setColor(0x000000)
+        else
+            graphics.setColor(e and WHITE or 0x7A8290)
+        end
+        graphics.print(8, y, string.format("%02d  %s", s, (e and e.name) or "- empty -"), w - 16, LEFT)
+    end
+end
+
+local function isMidiNoteSelected(n)
+    if selectedScaleTarget == 0 then
+        return (n % 12) == selectedTuneKey
+    end
+    return n == getActiveMidiNote(selectedTuneKey)
+end
+
+local function getMidiNoteCents(n)
+    if selectedScaleTarget == 0 then
+        return userScale1[n % 12] or 0
+    end
+    return userScale2[n] or 0
+end
+
+function paintTuningKeyboard(control)
+    local b = control:getBounds()
+    local w, h = b[WIDTH], b[HEIGHT]
+    local hiColor = control:getColor() or 0x529DEC
+
+    graphics.setColor(0x101010)
+    graphics.fillRect(0, 0, w, h)
+
+    local low, high = keyboardNoteRange()
+    local whiteNotes = {}
+    for n = low, high do
+        if KEYBOARD_IS_WHITE[n % 12] then
+            whiteNotes[#whiteNotes + 1] = n
+        end
+    end
+    local whiteCount = #whiteNotes
+    if whiteCount == 0 then return end
+    local whiteW = w // whiteCount
+
+    local whiteIndexOf = {}
+    for i, n in ipairs(whiteNotes) do
+        whiteIndexOf[n] = i - 1
+    end
+
+    for i, n in ipairs(whiteNotes) do
+        local kx = (i - 1) * whiteW
+        local on = isMidiNoteSelected(n)
+        local cents = getMidiNoteCents(n)
+        graphics.setColor(on and hiColor or WHITE)
+        graphics.fillRect(kx + 1, 0, whiteW - 2, h)
+
+        if cents ~= 0 then
+            graphics.setColor(cents > 0 and GREEN or RED)
+            graphics.fillRect(kx + 3, h - 6, whiteW - 6, 4)
+        end
+        if on or (n % 12 == 0) then
+            graphics.setColor(0x000000)
+            local oct = (n // 12) - 1
+            local lbl = (n % 12 == 0) and ("C" .. tostring(oct)) or NOTE_NAMES[(n % 12) + 1]
+            graphics.print(kx + 1, h - 22, lbl, whiteW - 2, CENTER, on and BOLD or REGULAR, SMALL)
+        end
+    end
+
+    local blackW = (whiteW * 3) // 5
+    local blackH = (h * 3) // 5
+    for n = low, high do
+        if not KEYBOARD_IS_WHITE[n % 12] then
+            local wi = whiteIndexOf[n - 1]
+            if wi then
+                local kx = (wi + 1) * whiteW - (blackW // 2)
+                local on = isMidiNoteSelected(n)
+                local cents = getMidiNoteCents(n)
+                graphics.setColor(on and hiColor or 0x000000)
+                graphics.fillRect(kx, 0, blackW, blackH)
+
+                if cents ~= 0 then
+                    graphics.setColor(cents > 0 and GREEN or RED)
+                    graphics.fillRect(kx + 2, blackH - 6, blackW - 4, 4)
+                end
+                if on then
+                    graphics.setColor(0x000000)
+                    graphics.print(kx, blackH - 22, NOTE_NAMES[(n % 12) + 1], blackW, CENTER, BOLD, SMALL)
+                end
+            end
+        end
+    end
+end
+
+local function selectKeyFromTouch(control, x, y)
+    local b = control:getBounds()
+    local w, h = b[WIDTH], b[HEIGHT]
+    local low, high = keyboardNoteRange()
+    local whiteNotes = {}
+    for n = low, high do
+        if KEYBOARD_IS_WHITE[n % 12] then
+            whiteNotes[#whiteNotes + 1] = n
+        end
+    end
+    local whiteCount = #whiteNotes
+    if whiteCount == 0 then return end
+    local whiteW = w // whiteCount
+    local whiteIndexOf = {}
+    for i, n in ipairs(whiteNotes) do
+        whiteIndexOf[n] = i - 1
+    end
+    local blackW = (whiteW * 3) // 5
+    local blackH = (h * 3) // 5
+
+    local hitNote = nil
+    if y <= blackH then
+        for n = low, high do
+            if not KEYBOARD_IS_WHITE[n % 12] then
+                local wi = whiteIndexOf[n - 1]
+                if wi then
+                    local kx = (wi + 1) * whiteW - (blackW // 2)
+                    if x >= kx and x <= kx + blackW then
+                        hitNote = n
+                        break
+                    end
+                end
+            end
+        end
+    end
+    if not hitNote then
+        local wi = math.max(1, math.min(whiteCount, (x // whiteW) + 1))
+        hitNote = whiteNotes[wi]
+    end
+    if hitNote then
+        local newKey = hitNote % 12
+        local newOct = (selectedScaleTarget == 1) and ((hitNote // 12) - 1) or selectedTuneOctave
+        if newKey == selectedTuneKey and newOct == selectedTuneOctave then
+            return
+        end
+        selectedTuneKey = newKey
+        selectedTuneOctave = newOct
+        refreshTuningWidgets()
+    end
+end
+
+function onReqTuningBtn(_valueObject, value)
+    if math.floor(value) > 0 then
+        requestGlobalTuningDump()
+    end
+end
+
+function onSendTuningBtn(_valueObject, value)
+    if math.floor(value) > 0 then
+        sendGlobalTuningTable()
+    end
+end
+
+function onScaleTarget(_valueObject, value)
+    if suppressTune then return end
+    local newTarget = (math.floor(value) > 0) and 1 or 0
+    if newTarget == selectedScaleTarget then return end
+    selectedScaleTarget = newTarget
+    refreshTuningWidgets()
+    info.setText(selectedScaleTarget == 0 and "User Scale 1 (12-Note)" or "User Scale 2 (128-Key)")
+end
+
+function onScaleOctave(_valueObject, value)
+    if suppressTune then return end
+    local newOct = math.max(-1, math.min(9, math.floor(value)))
+    if newOct == selectedTuneOctave then return end
+    selectedTuneOctave = newOct
+    refreshTuningWidgets()
+end
+
+function onTuneKeySelect(_valueObject, value)
+    if suppressTune then return end
+    local newKey = math.max(0, math.min(11, math.floor(value)))
+    if newKey == selectedTuneKey then return end
+    selectedTuneKey = newKey
+    refreshTuningWidgets()
+end
+
+local function centSign(c)
+    return (c > 0 and 1) or (c < 0 and -1) or 0
+end
+
+function onTuneKeyCents(_valueObject, value)
+    if suppressTune then return end
+    local newCents = math.max(-100, math.min(100, math.floor(value)))
+    local oldCents = getKeyTuningCents(selectedTuneKey)
+    if newCents == oldCents then return end
+    setKeyTuningCents(selectedTuneKey, newCents, true)
+    if not tunePresetView and centSign(oldCents) ~= centSign(newCents) then
+        local kbdCtrl = preset.getControl(20)
+        if kbdCtrl then kbdCtrl:repaint() end
+    end
+end
+
+function onResetScaleBtn(_valueObject, value)
+    if math.floor(value) <= 0 then return end
+    if selectedScaleTarget == 0 then
+        for k = 0, 11 do userScale1[k] = 0 end
+    else
+        for n = 0, 127 do userScale2[n] = 0 end
+    end
+    refreshTuningWidgets()
+    info.setText("Reset Active Scale to 0 ct")
+end
+
+function onTunePresetView(_valueObject, value)
+    if suppressTune then return end
+    local on = math.floor(value) > 0
+    if on ~= tunePresetView then
+        setTunePresetView(on)
+    end
+end
+
+function onTunePresetSlot(_valueObject, value)
+    if suppressTune then return end
+    pendingTuneDel = nil
+    tunePresetSlot = math.max(1, math.min(TUNE_PRESET_SLOTS, math.floor(value)))
+    local e = z1PersistLib.tuning["s" .. tostring(tunePresetSlot)]
+    setNameCharsBuffer(tuneNameChars, (e and e.name) or defaultTunePresetName(tunePresetSlot), 0x7E)
+    refreshTuningWidgets()
+end
+
+function onTunePresetSave(_valueObject, value)
+    if math.floor(value) <= 0 then return end
+    pendingTuneDel = nil
+    local name = getProgramNameString(tuneNameChars, true)
+    if name == "" then name = defaultTunePresetName(tunePresetSlot) end
+    local s1, s2 = {}, {}
+    for k = 0, 11 do s1[k + 1] = userScale1[k] or 0 end
+    for n = 0, 127 do s2[n + 1] = userScale2[n] or 0 end
+    z1PersistLib.tuning["s" .. tostring(tunePresetSlot)] = {
+        name   = name,
+        target = selectedScaleTarget,
+        s1     = s1,
+        s2     = s2,
+    }
+    local ok = (type(persist) == "function") and pcall(persist, z1PersistLib) or false
+    refreshTuningWidgets()
+    info.setText(string.format("Saved Tuning %02d: %s%s", tunePresetSlot, name, ok and "" or " (RAM)"))
+end
+
+function onTunePresetLoad(_valueObject, value)
+    if math.floor(value) <= 0 then return end
+    pendingTuneDel = nil
+    local e = z1PersistLib.tuning["s" .. tostring(tunePresetSlot)]
+    if not e then
+        info.setText(string.format("Tuning Slot %02d Empty", tunePresetSlot))
+        return
+    end
+    if type(e.s1) == "table" then
+        for k = 0, 11 do userScale1[k] = e.s1[k + 1] or 0 end
+    end
+    if type(e.s2) == "table" then
+        for n = 0, 127 do userScale2[n] = e.s2[n + 1] or 0 end
+    end
+    if type(e.target) == "number" then
+        selectedScaleTarget = e.target
+    end
+    setNameCharsBuffer(tuneNameChars, e.name or defaultTunePresetName(tunePresetSlot), 0x7E)
+    refreshTuningWidgets()
+    sendGlobalTuningTable()
+    info.setText("Loaded Tuning: " .. tostring(e.name))
+end
+
+function onTunePresetRename(_valueObject, value)
+    if math.floor(value) <= 0 then return end
+    pendingTuneDel = nil
+    local e = z1PersistLib.tuning["s" .. tostring(tunePresetSlot)]
+    if not e then
+        info.setText("Slot empty - use Save")
+        return
+    end
+    local name = getProgramNameString(tuneNameChars, true)
+    if name == "" then name = defaultTunePresetName(tunePresetSlot) end
+    e.name = name
+    if type(persist) == "function" then pcall(persist, z1PersistLib) end
+    refreshTuningWidgets()
+    info.setText("Renamed: " .. name)
+end
+
+function onTunePresetDelete(_valueObject, value)
+    if math.floor(value) <= 0 then return end
+    local key = "s" .. tostring(tunePresetSlot)
+    if not z1PersistLib.tuning[key] then
+        info.setText(string.format("Slot %02d is empty", tunePresetSlot))
+        return
+    end
+    if pendingTuneDel ~= tunePresetSlot then
+        pendingTuneDel = tunePresetSlot
+        info.setText(string.format("Press DELETE again to clear %02d", tunePresetSlot))
+        return
+    end
+    pendingTuneDel = nil
+    z1PersistLib.tuning[key] = nil
+    if type(persist) == "function" then pcall(persist, z1PersistLib) end
+    setNameCharsBuffer(tuneNameChars, defaultTunePresetName(tunePresetSlot), 0x7E)
+    refreshTuningWidgets()
+    info.setText(string.format("Cleared slot %02d", tunePresetSlot))
+end
 
 function preset.onLoad()
     suppressCharCallback = true
+    for ovId, items in pairs(ENUM_DEFS) do
+        overlays.create(ovId, items)
+    end
+    if type(recall) == "function" and (type(recallJson) ~= "function" or recallJson() ~= nil) then
+        local stored = {}
+        if pcall(recall, stored) and stored.version == 2 then
+            if type(stored.unit) == "table" then z1PersistLib.unit = stored.unit end
+            if type(stored.chain) == "table" then z1PersistLib.chain = stored.chain end
+            if type(stored.tuning) == "table" then z1PersistLib.tuning = stored.tuning end
+            if type(stored.oscUnit) == "table" then z1PersistLib.oscUnit = stored.oscUnit end
+            if type(stored.oscDual) == "table" then z1PersistLib.oscDual = stored.oscDual end
+            if type(stored.autoPcReq) == "boolean" then
+                autoPatchReqOnPc = stored.autoPcReq
+                z1PersistLib.autoPcReq = stored.autoPcReq
+            end
+        end
+    end
     local statusCtrl = preset.getControl(3)
     if statusCtrl then
         statusCtrl:setPaintCallback(paintZ1Status)
@@ -1566,10 +2320,32 @@ function preset.onLoad()
     if dispCtrl then
         dispCtrl:setPaintCallback(paintProgramName)
     end
+    local kbdCtrl = preset.getControl(20)
+    if kbdCtrl then
+        kbdCtrl:setPaintCallback(paintTuningKeyboard)
+        kbdCtrl:setTouchCallback(function(c, event)
+            if event and (event.type == DOWN or event.type == CLICK or event.type == nil) then
+                selectKeyFromTouch(c, event.x or 0, event.y or 30)
+            end
+        end)
+    end
+    local listCtrl = preset.getControl(21)
+    if listCtrl then
+        listCtrl:setPaintCallback(paintTunePresetList)
+    end
 end
 
 function preset.onReady()
     suppressCharCallback = false
+    local c10 = controls.get(10)
+    if c10 then c10:getValue("value"):setOverlayId(__OV(OV_SCALE_TARGET)) end
+    local c26 = controls.get(26)
+    if c26 then c26:getValue("value"):setOverlayId(__OV(OV_SCALE_TARGET)) end
+    local c12 = controls.get(12)
+    if c12 then c12:getValue("value"):setOverlayId(__OV(OV_KEY_SELECT)) end
+    suppressTune = true
+    syncCtrlValue(27, autoPatchReqOnPc and 1 or 0)
+    suppressTune = false
     if #undoStack == 0 then
         pushUndoState("Init", true)
     end
@@ -1578,20 +2354,26 @@ function preset.onReady()
     else
         refreshStatusAndNameWidgets()
     end
+    setTunePresetView(false)
+    handshakeRetrySeconds = 0
+    sendDeviceInquiry()
+    ensureOneSecondTimerRunning()
     info.setText("Z1 Base Ready")
 end
 end
 
 do
     local env = __makeEnv("z1-base",
-        {[1]=3,[2]=4,[3]=5,[4]=6,[5]=11,[6]=12,[7]=7,[33]=8,[34]=9,[35]=10,[50]=1,[51]=2},
-        {},
+        {[1]=4,[2]=5,[3]=6,[4]=7,[5]=12,[6]=13,[7]=8,[8]=14,[9]=15,[10]=19,[11]=20,[12]=21,[13]=22,[14]=17,[15]=27,[16]=28,[17]=29,[18]=30,[19]=18,[20]=23,[21]=26,[22]=31,[23]=32,[25]=25,[26]=24,[27]=16,[33]=9,[34]=10,[35]=11,[50]=1,[51]=2,[52]=3},
+        {[1]=1,[2]=2},
         {[1]=1})
     local ok, err = pcall(__module_z1_base, env)
     if not ok then print("Z1 merged: error loading z1-base: " .. tostring(err)) end
+    if rawget(_G, "NOTE_NAMES") == nil then _G.NOTE_NAMES = env.NOTE_NAMES end
     if rawget(_G, "buildDeviceInquiryBody") == nil then _G.buildDeviceInquiryBody = env.buildDeviceInquiryBody end
     if rawget(_G, "sendDeviceInquiry") == nil then _G.sendDeviceInquiry = env.sendDeviceInquiry end
     if rawget(_G, "getProgramNameString") == nil then _G.getProgramNameString = env.getProgramNameString end
+    if rawget(_G, "setNameCharsBuffer") == nil then _G.setNameCharsBuffer = env.setNameCharsBuffer end
     if rawget(_G, "unpackKorgData") == nil then _G.unpackKorgData = env.unpackKorgData end
     if rawget(_G, "packKorgData") == nil then _G.packKorgData = env.packKorgData end
     if rawget(_G, "buildParamChangeBody") == nil then _G.buildParamChangeBody = env.buildParamChangeBody end
@@ -1613,6 +2395,16 @@ do
     if rawget(_G, "parseSysexMessage") == nil then _G.parseSysexMessage = env.parseSysexMessage end
     if rawget(_G, "paintZ1Status") == nil then _G.paintZ1Status = env.paintZ1Status end
     if rawget(_G, "paintProgramName") == nil then _G.paintProgramName = env.paintProgramName end
+    if rawget(_G, "buildGlobalDumpRequestBody") == nil then _G.buildGlobalDumpRequestBody = env.buildGlobalDumpRequestBody end
+    if rawget(_G, "buildGlobalParamChangeBody") == nil then _G.buildGlobalParamChangeBody = env.buildGlobalParamChangeBody end
+    if rawget(_G, "buildGlobalDataDumpBody") == nil then _G.buildGlobalDataDumpBody = env.buildGlobalDataDumpBody end
+    if rawget(_G, "getKeyTuningCents") == nil then _G.getKeyTuningCents = env.getKeyTuningCents end
+    if rawget(_G, "refreshTuningWidgets") == nil then _G.refreshTuningWidgets = env.refreshTuningWidgets end
+    if rawget(_G, "setTunePresetView") == nil then _G.setTunePresetView = env.setTunePresetView end
+    if rawget(_G, "requestGlobalTuningDump") == nil then _G.requestGlobalTuningDump = env.requestGlobalTuningDump end
+    if rawget(_G, "sendGlobalTuningTable") == nil then _G.sendGlobalTuningTable = env.sendGlobalTuningTable end
+    if rawget(_G, "paintTunePresetList") == nil then _G.paintTunePresetList = env.paintTunePresetList end
+    if rawget(_G, "paintTuningKeyboard") == nil then _G.paintTuningKeyboard = env.paintTuningKeyboard end
     __export(env, "bs_onHandshakeBtn", "onHandshakeBtn")
     __export(env, "bs_onPatchRequestBtn", "onPatchRequestBtn")
     __export(env, "bs_f3", "onRecoverBackupBtn")
@@ -1622,76 +2414,32 @@ do
     __export(env, "bs_fmtAsciiChar", "fmtAsciiChar")
     __export(env, "bs_onUndoBtn", "onUndoBtn")
     __export(env, "bs_onRedoBtn", "onRedoBtn")
+    __export(env, "bs_onReqTuningBtn", "onReqTuningBtn")
+    __export(env, "bs_onSendTuningBtn", "onSendTuningBtn")
+    __export(env, "bs_f12", "onPcPatchReqToggle")
+    __export(env, "bs_onTunePresetView", "onTunePresetView")
+    __export(env, "bs_onResetScaleBtn", "onResetScaleBtn")
+    __export(env, "bs_onScaleTarget", "onScaleTarget")
+    __export(env, "bs_onScaleOctave", "onScaleOctave")
+    __export(env, "bs_fmtScaleOctave", "fmtScaleOctave")
+    __export(env, "bs_onTuneKeySelect", "onTuneKeySelect")
+    __export(env, "bs_onTuneKeyCents", "onTuneKeyCents")
+    __export(env, "bs_fmtCents", "fmtCents")
+    __export(env, "bs_onTunePresetSlot", "onTunePresetSlot")
+    __export(env, "bs_fmtTunePresetSlot", "fmtTunePresetSlot")
+    __export(env, "bs_onTunePresetLoad", "onTunePresetLoad")
+    __export(env, "bs_onTunePresetSave", "onTunePresetSave")
+    __export(env, "bs_f25", "onTunePresetRename")
+    __export(env, "bs_f26", "onTunePresetDelete")
 end
 
 -- ==========================================================================
 -- module z1-common-arp  (prefix ca_)
 -- ==========================================================================
 local function __module_z1_common_arp(_ENV)
--- Korg Z1 - Program Common, Assignable Controllers, Link Arpeggiator & Program Name for Electra One mk2
--- Covers:
---   [Program Name]    (IDs 1..16,    ExID = 0: 16 ASCII characters 0x20..0x7F)
---   [Program Common]  (IDs 17..30,   ExID = 0: Category, Group, Voice/Trigger, Unison, Scale, Random Pitch)
---   [Controller]      (IDs 366..373, ExID = 0: SW1, SW2, Foot SW, Foot Pedal, Pad Hold)
---   [Link Arpeggio]   (IDs 374..383, ExID = 0: Pattern, Speed, Resolution, Octave, Latch, KeySync, Vel/Gate)
---
--- Layout (35 controls across 3 Control Sets):
---   Control Set 1 (Rows 1-2, Slots 1..12):  Program Common & Unison (IDs 17..27, 30)
---   Control Set 2 (Rows 3-4, Slots 13..24): Scale (IDs 28..29) & Link Arpeggiator (IDs 374..383)
---   Control Set 3 (Rows 5-6, Slots 25..35): Assignable Controllers (IDs 366..373) & Program Name Editor/Display (IDs 1..16)
+
 
 local DEVICE_ID = 1
-
-local function getGlobalChannel()
-    local dev = preset.getDevice(DEVICE_ID)
-    if dev then
-        return (dev:getChannel() - 1) & 0x0F
-    end
-    return 0
-end
-
--- ============================================================================
--- 1. Overlays & Enumerations (including Non-Contiguous MODSRC2 for Retrigger)
--- ============================================================================
-
-MODSRC2 = {
-    { value = 0,  label = "Off" },
-    { value = 11, label = "Note[Linear]" },
-    { value = 12, label = "Note[Exp]" },
-    { value = 13, label = "Note Split[High]" },
-    { value = 14, label = "Note Split[Low]" },
-    { value = 15, label = "Velocity[Soft]" },
-    { value = 16, label = "Velocity[Medium]" },
-    { value = 17, label = "Velocity[Hard]" },
-    { value = 18, label = "Pitch Bend" },
-    { value = 19, label = "After Touch" },
-    { value = 20, label = "Mod Wheel(CC#1)" },
-    { value = 21, label = "ATouch+Mod.Wheel" },
-    { value = 22, label = "ATHalf+Mod.Wheel" },
-    { value = 23, label = "X[+/-](CC#16)" },
-    { value = 24, label = "X[+](CC#16)" },
-    { value = 25, label = "X[-](CC#16)" },
-    { value = 26, label = "Y[+/-](CC#17)" },
-    { value = 27, label = "Y[+](CC#17)" },
-    { value = 28, label = "Y[-](CC#17)" },
-    { value = 29, label = "Knob1(CC#19)" },
-    { value = 30, label = "Knob2(CC#20)" },
-    { value = 31, label = "Knob3(CC#21)" },
-    { value = 32, label = "Knob4(CC#22)" },
-    { value = 33, label = "Knob5(CC#23)" },
-    { value = 34, label = "Mod.SW1(CC#80)" },
-    { value = 35, label = "Mod.SW2(CC#81)" },
-    { value = 36, label = "Foot SW(CC#82)" },
-    { value = 37, label = "Foot Pedal(CC#4)" },
-    { value = 38, label = "Damper(CC#64)" },
-    { value = 39, label = "Sostenuto(CC#66)" },
-    { value = 40, label = "Breath(CC#2)" },
-    { value = 41, label = "MIDI Vol(CC#7)" },
-    { value = 42, label = "MIDI Pan(CC#10)" },
-    { value = 43, label = "MIDI Expr(CC#11)" },
-    { value = 44, label = "Porta Time(CC#5)" },
-    { value = 45, label = "Porta SW(CC#65)" },
-}
 
 local OV = {
     CATEGORY   = 1,
@@ -1714,161 +2462,10 @@ local OV = {
     LATCH_MODE = 18,
 }
 
-local ENUM_DEFS = {
-    [OV.CATEGORY] = {
-        { value = 0,  label = "Synth-Hard" },
-        { value = 1,  label = "Synth-Soft" },
-        { value = 2,  label = "Synth-Lead" },
-        { value = 3,  label = "Synth-Motion" },
-        { value = 4,  label = "Synth-Bass" },
-        { value = 5,  label = "E.Piano" },
-        { value = 6,  label = "Organ" },
-        { value = 7,  label = "Keyboard" },
-        { value = 8,  label = "Bell" },
-        { value = 9,  label = "Strings" },
-        { value = 10, label = "Pad/Choir" },
-        { value = 11, label = "Brass" },
-        { value = 12, label = "Reed/Wind" },
-        { value = 13, label = "Guitar/Plucked" },
-        { value = 14, label = "Bass" },
-        { value = 15, label = "Percussive" },
-        { value = 16, label = "Arpeggio" },
-        { value = 17, label = "SFX/Other" },
-    },
-    [OV.USER_GRP] = {
-        { value = 0,  label = "GROUP 1" },  { value = 1,  label = "GROUP 2" },
-        { value = 2,  label = "GROUP 3" },  { value = 3,  label = "GROUP 4" },
-        { value = 4,  label = "GROUP 5" },  { value = 5,  label = "GROUP 6" },
-        { value = 6,  label = "GROUP 7" },  { value = 7,  label = "GROUP 8" },
-        { value = 8,  label = "GROUP 9" },  { value = 9,  label = "GROUP 10" },
-        { value = 10, label = "GROUP 11" }, { value = 11, label = "GROUP 12" },
-        { value = 12, label = "GROUP 13" }, { value = 13, label = "GROUP 14" },
-        { value = 14, label = "GROUP 15" }, { value = 15, label = "GROUP 16" },
-    },
-    [OV.VOICE_MODE] = {
-        { value = 0, label = "MONO MULTI" },
-        { value = 1, label = "MONO SINGLE" },
-        { value = 2, label = "POLY" },
-    },
-    [OV.KEY_PRIO] = {
-        { value = 0, label = "LAST" },
-        { value = 1, label = "LOW" },
-        { value = 2, label = "HIGH" },
-    },
-    [OV.OFF_ON]  = { { value = 0, label = "OFF" }, { value = 1, label = "ON" } },
-    [OV.MODSRC2] = MODSRC2,
-    [OV.UNI_TYPE] = {
-        { value = 0, label = "OFF" },
-        { value = 1, label = "2 VOICES" },
-        { value = 2, label = "3 VOICES" },
-        { value = 3, label = "6 VOICES" },
-    },
-    [OV.UNI_MODE] = {
-        { value = 0, label = "FIXED" },
-        { value = 1, label = "DYNAMIC" },
-    },
-    [OV.SCALE_TYPE] = {
-        { value = 0,  label = "Equal Temp" },
-        { value = 1,  label = "Pure Major" },
-        { value = 2,  label = "Pure Minor" },
-        { value = 3,  label = "Arabic" },
-        { value = 4,  label = "Pythagorean" },
-        { value = 5,  label = "Werckmeister" },
-        { value = 6,  label = "Kirnberger" },
-        { value = 7,  label = "Slendro" },
-        { value = 8,  label = "Pelog" },
-        { value = 9,  label = "User Scale 1" },
-        { value = 10, label = "User Scale 2" },
-    },
-    [OV.SCALE_KEY] = {
-        { value = 0,  label = "C" },  { value = 1,  label = "C#" },
-        { value = 2,  label = "D" },  { value = 3,  label = "D#" },
-        { value = 4,  label = "E" },  { value = 5,  label = "F" },
-        { value = 6,  label = "F#" }, { value = 7,  label = "G" },
-        { value = 8,  label = "G#" }, { value = 9,  label = "A" },
-        { value = 10, label = "A#" }, { value = 11, label = "B" },
-    },
-    [OV.ARP_PAT] = {
-        { value = 0,  label = "UP" },     { value = 1,  label = "DOWN" },
-        { value = 2,  label = "ALT 1" },  { value = 3,  label = "ALT 2" },
-        { value = 4,  label = "RANDOM" }, { value = 5,  label = "USER 1-1" },
-        { value = 6,  label = "USER 1-2" },{ value = 7,  label = "USER 1-3" },
-        { value = 8,  label = "USER 1-4" },{ value = 9,  label = "USER 1-5" },
-        { value = 10, label = "USER 2-1" },{ value = 11, label = "USER 2-2" },
-        { value = 12, label = "USER 2-3" },{ value = 13, label = "USER 2-4" },
-        { value = 14, label = "USER 2-5" },{ value = 15, label = "USER 3-1" },
-        { value = 16, label = "USER 3-2" },{ value = 17, label = "USER 3-3" },
-        { value = 18, label = "USER 3-4" },{ value = 19, label = "USER 3-5" },
-    },
-    [OV.ARP_RESO] = {
-        { value = 0, label = "1/16 Tri (16T)" },
-        { value = 1, label = "1/16" },
-        { value = 2, label = "1/8 Tri (8T)" },
-        { value = 3, label = "1/8" },
-        { value = 4, label = "1/4 Tri (4T)" },
-        { value = 5, label = "1/4" },
-    },
-    [OV.ARP_OCT] = {
-        { value = 0, label = "1 Octave" },
-        { value = 1, label = "2 Octaves" },
-        { value = 2, label = "3 Octaves" },
-        { value = 3, label = "4 Octaves" },
-    },
-    [OV.SW1_FUNC] = {
-        { value = 0, label = "Mod.SW1(CC#80)" },
-        { value = 1, label = "MasterFX(CC#92)" },
-        { value = 2, label = "FX1 SW(CC#94)" },
-        { value = 3, label = "FX2 SW(CC#95)" },
-        { value = 4, label = "Octave Up" },
-        { value = 5, label = "Octave Down" },
-        { value = 6, label = "Mono SW(CC#18)" },
-        { value = 7, label = "Unison(CC#75)" },
-    },
-    [OV.SW2_FUNC] = {
-        { value = 0, label = "Mod.SW2(CC#81)" },
-        { value = 1, label = "MasterFX(CC#92)" },
-        { value = 2, label = "FX1 SW(CC#94)" },
-        { value = 3, label = "FX2 SW(CC#95)" },
-        { value = 4, label = "Octave Up" },
-        { value = 5, label = "Octave Down" },
-        { value = 6, label = "Mono SW(CC#18)" },
-        { value = 7, label = "Unison(CC#75)" },
-    },
-    [OV.FSW_FUNC] = {
-        { value = 0,  label = "Foot SW(CC#82)" },
-        { value = 1,  label = "Damper(CC#64)" },
-        { value = 2,  label = "Porta SW(CC#65)" },
-        { value = 3,  label = "Sostenuto(CC#66)" },
-        { value = 4,  label = "MasterFX(CC#92)" },
-        { value = 5,  label = "FX1 SW(CC#94)" },
-        { value = 6,  label = "FX2 SW(CC#95)" },
-        { value = 7,  label = "Octave Up" },
-        { value = 8,  label = "Octave Down" },
-        { value = 9,  label = "Mono SW(CC#18)" },
-        { value = 10, label = "Unison(CC#75)" },
-        { value = 11, label = "Arpeggio SW" },
-        { value = 12, label = "Pad Hold" },
-    },
-    [OV.PED_FUNC] = {
-        { value = 0, label = "Foot Ped(CC#4)" },
-        { value = 1, label = "Breath(CC#2)" },
-        { value = 2, label = "PortaTime(CC#5)" },
-        { value = 3, label = "Volume(CC#7)" },
-        { value = 4, label = "Panpot(CC#10)" },
-        { value = 5, label = "Expr(CC#11)" },
-    },
-    [OV.LATCH_MODE] = {
-        { value = 0, label = "LATCH" },
-        { value = 1, label = "UNLATCH" },
-    },
-}
-
--- ============================================================================
--- 2. Static Control Map (Slots 1..32 -> Z1 IDs 17..30, 366..383)
--- ============================================================================
+local ENUM_DEFS = {}
 
 STATIC_COMMON_MAP = {
-    -- Control Set 1: Program Common & Unison (IDs 17..27, 30)
+
     [1]  = { id = 17,  kind = "list", ov = OV.CATEGORY },
     [2]  = { id = 18,  kind = "list", ov = OV.USER_GRP },
     [3]  = { id = 21,  kind = "list", ov = OV.VOICE_MODE },
@@ -1881,7 +2478,7 @@ STATIC_COMMON_MAP = {
     [10] = { id = 26,  kind = "list", ov = OV.UNI_MODE },
     [11] = { id = 27,  kind = "num" },
     [12] = { id = 30,  kind = "num" },
-    -- Control Set 2: Scale (IDs 28..29) & Link Arpeggio (IDs 374..383)
+
     [13] = { id = 29,  kind = "list", ov = OV.SCALE_TYPE },
     [14] = { id = 28,  kind = "list", ov = OV.SCALE_KEY },
     [15] = { id = 374, kind = "list", ov = OV.ARP_PAT },
@@ -1894,7 +2491,7 @@ STATIC_COMMON_MAP = {
     [22] = { id = 379, kind = "list", ov = OV.OFF_ON },
     [23] = { id = 380, kind = "num" },
     [24] = { id = 381, kind = "num" },
-    -- Control Set 3: Assignable Controllers (IDs 366..373)
+
     [25] = { id = 366, kind = "list", ov = OV.SW1_FUNC },
     [26] = { id = 367, kind = "list", ov = OV.LATCH_MODE },
     [27] = { id = 368, kind = "list", ov = OV.SW2_FUNC },
@@ -1905,46 +2502,17 @@ STATIC_COMMON_MAP = {
     [32] = { id = 373, kind = "list", ov = OV.OFF_ON },
 }
 
--- ============================================================================
--- 3. Program Name State (IDs 1..16) & SysEx Builders
--- ============================================================================
-
-programNameChars = {
+programNameChars = _G.programNameChars or {
     0x49, 0x6E, 0x69, 0x74, 0x20, 0x50, 0x72, 0x6F,
     0x67, 0x72, 0x61, 0x6D, 0x20, 0x20, 0x20, 0x20,
-} -- Default: "Init Program    "
-selectedCharPos = 1
-local suppressCharCallback = false
+}
+_G.programNameChars = programNameChars
 
-function getProgramNameString()
-    local chars = {}
-    for i = 1, 16 do
-        local c = programNameChars[i] or 0x20
-        if c < 0x20 or c > 0x7F then c = 0x20 end
-        chars[i] = string.char(c)
-    end
-    return table.concat(chars)
-end
-
--- Helper to populate Program Name from an unpacked Z1 Program Dump (bytes 1..16) without echoing SysEx
 function setProgramNameFromDump(unpackedBytes)
     if type(unpackedBytes) ~= "table" then
         return
     end
-    for i = 1, 16 do
-        local b = unpackedBytes[i]
-        if type(b) == "number" and b >= 0x20 and b <= 0x7F then
-            programNameChars[i] = b
-        else
-            programNameChars[i] = 0x20
-        end
-    end
-    local charCtrl = controls.get(34)
-    if charCtrl then
-        suppressCharCallback = true
-        charCtrl:getValue("value"):updateValue(programNameChars[selectedCharPos])
-        suppressCharCallback = false
-    end
+    setNameCharsBuffer(programNameChars, unpackedBytes, 0x7F)
     local dispCtrl = preset.getControl(35)
     if dispCtrl then
         dispCtrl:repaint()
@@ -1964,28 +2532,12 @@ function paintProgramName(control)
     graphics.setColor(0x529DEC)
     graphics.drawRect(0, 0, w, h)
 
-    local nameStr = getProgramNameString()
-    local curChar = string.sub(nameStr, selectedCharPos, selectedCharPos)
     graphics.setColor(ORANGE)
-    graphics.print(6, 3, string.format("PROGRAM NAME [Pos %02d: '%s']", selectedCharPos, curChar), w - 12, LEFT, REGULAR, SMALL)
+    graphics.print(6, 3, "PROGRAM NAME", w - 12, LEFT, REGULAR, SMALL)
 
     graphics.setColor(WHITE)
-    graphics.print(6, 23, nameStr, w - 12, LEFT, BOLD, MEDIUM)
+    graphics.print(6, 23, getProgramNameString(), w - 12, LEFT, BOLD, MEDIUM)
 end
-
-local function sendParamChange(paramId, signedVal)
-    local dev = preset.getDevice(DEVICE_ID)
-    local body = buildParamChangeBody(paramId, signedVal)
-    if dev then
-        dev:sendSysex(body)
-    else
-        midi.sendSysex(PORT_1, body)
-    end
-end
-
--- ============================================================================
--- 4. Control Callbacks
--- ============================================================================
 
 function onStaticCommon(valueObject, value)
     local ctrlId = __LID(valueObject:getControl():getId())
@@ -2001,40 +2553,6 @@ function onStaticCommon(valueObject, value)
     end
     sendParamChange(spec.id, z1Val)
 end
-
-function onNamePos(_valueObject, value)
-    local pos = math.floor(value)
-    if pos < 1 then pos = 1 elseif pos > 16 then pos = 16 end
-    selectedCharPos = pos
-    local charCtrl = controls.get(34)
-    if charCtrl then
-        suppressCharCallback = true
-        charCtrl:getValue("value"):updateValue(programNameChars[selectedCharPos] or 0x20)
-        suppressCharCallback = false
-    end
-    local dispCtrl = preset.getControl(35)
-    if dispCtrl then
-        dispCtrl:repaint()
-    end
-end
-
-function onNameChar(_valueObject, value)
-    if suppressCharCallback then
-        return
-    end
-    local ascii = math.floor(value)
-    if ascii < 0x20 then ascii = 0x20 elseif ascii > 0x7F then ascii = 0x7F end
-    programNameChars[selectedCharPos] = ascii
-    sendParamChange(selectedCharPos, ascii)
-    local dispCtrl = preset.getControl(35)
-    if dispCtrl then
-        dispCtrl:repaint()
-    end
-end
-
--- ============================================================================
--- 5. Lifecycle Hooks
--- ============================================================================
 
 function preset.onLoad()
     for ovId, items in pairs(ENUM_DEFS) do
@@ -2059,35 +2577,10 @@ function preset.onReady()
     info.setText("Z1 Common & Arp Ready")
 end
 
-local function z1ValToIdx(ovId, z1Val)
-    if not ovId then return z1Val end
-    local ov = overlays.get(ovId)
-    if ov and ov.getIndexByValue then
-        local idx = ov:getIndexByValue(z1Val)
-        if idx ~= nil then return idx end
-    end
-    if ov and ov.getValueByIndex then
-        for i = 0, 63 do
-            local v = ov:getValueByIndex(i)
-            if v == nil then break end
-            if v == z1Val then return i end
-        end
-    end
-    return z1Val
-end
-
 function preset.onZ1Param(exId, paramId, z1Val)
     if exId ~= 0 then return end
     if paramId >= 1 and paramId <= 16 then
         programNameChars[paramId] = z1Val & 0x7F
-        if paramId == selectedCharPos then
-            local charCtrl = controls.get(34)
-            if charCtrl then
-                suppressCharCallback = true
-                charCtrl:getValue("value"):updateValue(programNameChars[selectedCharPos])
-                suppressCharCallback = false
-            end
-        end
         local dispCtrl = preset.getControl(35)
         if dispCtrl then dispCtrl:repaint() end
         return
@@ -2096,7 +2589,10 @@ function preset.onZ1Param(exId, paramId, z1Val)
         if spec.id == paramId then
             local disp = (spec.kind == "list") and z1ValToIdx(spec.ov, z1Val) or z1Val
             local c = controls.get(cid)
-            if c then c:getValue("value"):updateValue(disp) end
+            if c then
+                local vo = c:getValue("value")
+                if vo and vo:getValue() ~= disp then vo:updateValue(disp) end
+            end
         end
     end
 end
@@ -2112,7 +2608,10 @@ function preset.onZ1Dump(params, unpacked)
         if z1Val ~= nil then
             local disp = (spec.kind == "list") and z1ValToIdx(spec.ov, z1Val) or z1Val
             local c = controls.get(cid)
-            if c then c:getValue("value"):updateValue(disp) end
+            if c then
+                local vo = c:getValue("value")
+                if vo and vo:getValue() ~= disp then vo:updateValue(disp) end
+            end
         end
     end
 end
@@ -2120,133 +2619,34 @@ end
 
 do
     local env = __makeEnv("z1-common-arp",
-        {[1]=16,[2]=17,[3]=18,[4]=19,[5]=20,[6]=21,[7]=22,[8]=23,[9]=24,[10]=25,[11]=26,[12]=27,[13]=28,[14]=29,[15]=30,[16]=31,[17]=32,[18]=33,[19]=34,[20]=35,[21]=36,[22]=37,[23]=38,[24]=39,[25]=40,[26]=41,[27]=42,[28]=43,[29]=44,[30]=45,[31]=46,[32]=47,[33]=48,[34]=49,[35]=50,[50]=13,[51]=14,[52]=15},
-        {[1]=1,[2]=2,[3]=3,[4]=4,[5]=5,[6]=6,[7]=7,[8]=8,[9]=9,[10]=10,[11]=11,[12]=12,[13]=13,[14]=14,[15]=16,[16]=17,[17]=18,[18]=15},
+        {[1]=36,[2]=37,[3]=38,[4]=39,[5]=40,[6]=41,[7]=42,[8]=43,[9]=44,[10]=45,[11]=46,[12]=47,[13]=48,[14]=49,[15]=50,[16]=51,[17]=52,[18]=53,[19]=54,[20]=55,[21]=56,[22]=57,[23]=58,[24]=59,[25]=60,[26]=61,[27]=62,[28]=63,[29]=64,[30]=65,[31]=66,[32]=67,[35]=68,[50]=33,[51]=34,[52]=35},
+        {[1]=3,[2]=4,[3]=5,[4]=6,[5]=7,[6]=8,[7]=9,[8]=10,[9]=11,[10]=2,[11]=12,[12]=13,[13]=14,[14]=15,[15]=17,[16]=18,[17]=19,[18]=16},
         {[1]=2})
-    env.fmtAsciiChar = function(...) return _G["bs_fmtAsciiChar"](...) end
     local ok, err = pcall(__module_z1_common_arp, env)
     if not ok then print("Z1 merged: error loading z1-common-arp: " .. tostring(err)) end
-    if rawget(_G, "MODSRC2") == nil then _G.MODSRC2 = env.MODSRC2 end
-    if rawget(_G, "getProgramNameString") == nil then _G.getProgramNameString = env.getProgramNameString end
     if rawget(_G, "setProgramNameFromDump") == nil then _G.setProgramNameFromDump = env.setProgramNameFromDump end
     if rawget(_G, "paintProgramName") == nil then _G.paintProgramName = env.paintProgramName end
     __export(env, "ca_onStaticCommon", "onStaticCommon")
     __export(env, "ca_fmtArpSpeed", "fmtArpSpeed")
-    __export(env, "ca_onNamePos", "onNamePos")
-    __export(env, "ca_onNameChar", "onNameChar")
 end
 
 -- ==========================================================================
 -- module z1-osc-common  (prefix oc_)
 -- ==========================================================================
 local function __module_z1_osc_common(_ENV)
--- Korg Z1 - OSC Common + OSC 1 & OSC 2 Multi-Page Editor for Electra One mk2
--- Page 1: OSC Common (Jump OSC 1 / Jump OSC 2 buttons, Selected OSC 1 & OSC 2 Model LCDs, Pitch/Slope/Mod IDs 175..187 & 189..201)
--- Page 2: OSC 1 Dynamic Model Editor (ID 174 ExID 0 + all 13 OSC1 Models IDs 464..754 ExID 1 + Jump back to OSC Common)
--- Page 3: OSC 2 Dynamic Model Editor (ID 188 ExID 0 + all 9 OSC2 Models IDs 464..615 ExID 2 + Jump back to OSC Common)
+
 
 local DEVICE_ID = 1
 OSC_COMMON_PAGE_ID = 1
 OSC1_PAGE_ID       = 2
 OSC2_PAGE_ID       = 3
 
-local function getGlobalChannel()
-    local dev = preset.getDevice(DEVICE_ID)
-    if dev and dev.getChannel then
-        return (dev:getChannel() - 1) & 0x0F
-    end
-    return 0
-end
-
--- ============================================================================
--- 1. Overlays, Model Names & Enumerations
--- ============================================================================
-
-MODSRC1 = {
-    { value = 0,  label = "Off" },
-    { value = 1,  label = "EG1" },
-    { value = 2,  label = "EG2" },
-    { value = 3,  label = "EG3" },
-    { value = 4,  label = "EG4" },
-    { value = 5,  label = "Amp EG" },
-    { value = 6,  label = "LFO1" },
-    { value = 7,  label = "LFO2" },
-    { value = 8,  label = "LFO3" },
-    { value = 9,  label = "LFO4" },
-    { value = 10, label = "Portamento" },
-    { value = 11, label = "Note[Linear]" },
-    { value = 12, label = "Note[Exp]" },
-    { value = 13, label = "Note Split[High]" },
-    { value = 14, label = "Note Split[Low]" },
-    { value = 15, label = "Velocity[Soft]" },
-    { value = 16, label = "Velocity[Medium]" },
-    { value = 17, label = "Velocity[Hard]" },
-    { value = 18, label = "Pitch Bend" },
-    { value = 19, label = "After Touch" },
-    { value = 20, label = "Mod Wheel(CC#1)" },
-    { value = 21, label = "ATouch+Mod.Wheel" },
-    { value = 22, label = "ATHalf+Mod.Wheel" },
-    { value = 23, label = "X[+/-](CC#16)" },
-    { value = 24, label = "X[+](CC#16)" },
-    { value = 25, label = "X[-](CC#16)" },
-    { value = 26, label = "Y[+/-](CC#17)" },
-    { value = 27, label = "Y[+](CC#17)" },
-    { value = 28, label = "Y[-](CC#17)" },
-    { value = 29, label = "Knob1(CC#19)" },
-    { value = 30, label = "Knob2(CC#20)" },
-    { value = 31, label = "Knob3(CC#21)" },
-    { value = 32, label = "Knob4(CC#22)" },
-    { value = 33, label = "Knob5(CC#23)" },
-    { value = 34, label = "Mod.SW1(CC#80)" },
-    { value = 35, label = "Mod.SW2(CC#81)" },
-    { value = 36, label = "Foot SW(CC#82)" },
-    { value = 37, label = "Foot Pedal(CC#4)" },
-    { value = 38, label = "Damper(CC#64)" },
-    { value = 39, label = "Sostenuto(CC#66)" },
-    { value = 40, label = "Breath(CC#2)" },
-    { value = 41, label = "MIDI Vol(CC#7)" },
-    { value = 42, label = "MIDI Pan(CC#10)" },
-    { value = 43, label = "MIDI Expr(CC#11)" },
-    { value = 44, label = "Porta Time(CC#5)" },
-    { value = 45, label = "Porta SW(CC#65)" },
-    { value = 46, label = "MasterFX(CC#92)" },
-    { value = 47, label = "FX1 SW(CC#94)" },
-    { value = 48, label = "FX2 SW(CC#95)" },
-}
-
-OSC1_TYPES = {
-    { value = 0,  label = "Standard OSC" },
-    { value = 1,  label = "Comb Filter" },
-    { value = 2,  label = "VPM OSC" },
-    { value = 3,  label = "Resonance OSC" },
-    { value = 4,  label = "Ring Mod OSC" },
-    { value = 5,  label = "Cross Mod OSC" },
-    { value = 6,  label = "Sync OSC" },
-    { value = 7,  label = "Organ Model" },
-    { value = 8,  label = "E.Piano Model" },
-    { value = 9,  label = "Brass Model" },
-    { value = 10, label = "Reed Model" },
-    { value = 11, label = "Plucked String" },
-    { value = 12, label = "Bowed String" },
-}
-
-OSC2_TYPES = {
-    { value = 0, label = "Standard OSC" },
-    { value = 1, label = "Comb Filter" },
-    { value = 2, label = "VPM OSC" },
-    { value = 3, label = "Resonance OSC" },
-    { value = 4, label = "Ring Mod OSC" },
-    { value = 5, label = "Cross Mod OSC" },
-    { value = 6, label = "Sync OSC" },
-    { value = 7, label = "Organ Model" },
-    { value = 8, label = "E.Piano Model" },
-}
-
 local OV = {
     MODSRC1      = 1,
     OCTAVE       = 2,
     OSC1_TYPE    = 3,
     OSC2_TYPE    = 4,
+    PRESET_TGT   = 5,
     SAW_PULSE    = 10,
     LFO_6_9      = 11,
     CLIP_RESO    = 12,
@@ -2267,162 +2667,12 @@ local OV = {
     OSC_IN_5_2   = 27,
 }
 
-local ENUM_DEFS = {
-    [OV.MODSRC1]   = MODSRC1,
-    [OV.OCTAVE]    = {
-        { value = 0, label = "32'" },
-        { value = 1, label = "16'" },
-        { value = 2, label = "8'" },
-        { value = 3, label = "4'" },
-    },
-    [OV.OSC1_TYPE] = OSC1_TYPES,
-    [OV.OSC2_TYPE] = OSC2_TYPES,
-    [OV.SAW_PULSE] = {
-        { value = 0, label = "SAW" },
-        { value = 1, label = "PULSE" },
-    },
-    [OV.LFO_6_9] = {
-        { value = 6, label = "LFO1" },
-        { value = 7, label = "LFO2" },
-        { value = 8, label = "LFO3" },
-        { value = 9, label = "LFO4" },
-    },
-    [OV.CLIP_RESO] = {
-        { value = 0, label = "CLIP" },
-        { value = 1, label = "RESO" },
-    },
-    [OV.COMB_IN_1] = {
-        { value = 0, label = "OSC2+Noise" },
-        { value = 1, label = "SubOSC+Noise" },
-        { value = 2, label = "Filter1+Noise" },
-        { value = 3, label = "Filter2+Noise" },
-        { value = 4, label = "Pulse Noise" },
-        { value = 5, label = "Impulse" },
-    },
-    [OV.COMB_IN_2] = {
-        { value = 0, label = "OSC1+Noise" },
-        { value = 1, label = "SubOSC+Noise" },
-        { value = 2, label = "Filter1+Noise" },
-        { value = 3, label = "Filter2+Noise" },
-        { value = 4, label = "Pulse Noise" },
-        { value = 5, label = "Impulse" },
-    },
-    [OV.WAVE_4] = {
-        { value = 0, label = "SAW" },
-        { value = 1, label = "SQU" },
-        { value = 2, label = "TRI" },
-        { value = 3, label = "SIN" },
-    },
-    [OV.TYPE_1_2] = {
-        { value = 0, label = "Type 1" },
-        { value = 1, label = "Type 2" },
-    },
-    [OV.VPM_MOD_W_1] = {
-        { value = 0, label = "SAW" },
-        { value = 1, label = "SQU" },
-        { value = 2, label = "TRI" },
-        { value = 3, label = "SIN" },
-        { value = 4, label = "OSC2" },
-        { value = 5, label = "Sub OSC" },
-        { value = 6, label = "Filter1" },
-        { value = 7, label = "Filter2" },
-    },
-    [OV.VPM_MOD_W_2] = {
-        { value = 0, label = "SAW" },
-        { value = 1, label = "SQU" },
-        { value = 2, label = "TRI" },
-        { value = 3, label = "SIN" },
-        { value = 4, label = "OSC1" },
-        { value = 5, label = "Sub OSC" },
-        { value = 6, label = "Filter1" },
-        { value = 7, label = "Filter2" },
-    },
-    [OV.OSC_IN_5_1] = {
-        { value = 0, label = "OSC2" },
-        { value = 1, label = "Sub OSC" },
-        { value = 2, label = "Noise" },
-        { value = 3, label = "Filter1" },
-        { value = 4, label = "Filter2" },
-    },
-    [OV.OSC_IN_5_2] = {
-        { value = 0, label = "OSC1" },
-        { value = 1, label = "Sub OSC" },
-        { value = 2, label = "Noise" },
-        { value = 3, label = "Filter1" },
-        { value = 4, label = "Filter2" },
-    },
-    [OV.ORGAN_WAVE] = {
-        { value = 0, label = "SIN1" },
-        { value = 1, label = "SIN2" },
-        { value = 2, label = "SIN3" },
-        { value = 3, label = "TRI" },
-    },
-    [OV.TRIG_MODE] = {
-        { value = 0, label = "SINGLE" },
-        { value = 1, label = "MULTI" },
-    },
-    [OV.BRASS_INST] = {
-        { value = 0, label = "Brass 1" },
-        { value = 1, label = "Brass 2" },
-        { value = 2, label = "Brass 3" },
-        { value = 3, label = "Horn 1" },
-        { value = 4, label = "Horn 2" },
-        { value = 5, label = "ReedBrass" },
-    },
-    [OV.SMOOTH_JMP] = {
-        { value = 0, label = "Smooth" },
-        { value = 1, label = "Jump" },
-    },
-    [OV.EG_1_5] = {
-        { value = 1, label = "EG1" },
-        { value = 2, label = "EG2" },
-        { value = 3, label = "EG3" },
-        { value = 4, label = "EG4" },
-        { value = 5, label = "Amp EG" },
-    },
-    [OV.REED_INST] = {
-        { value = 0,  label = "Hard Sax 1" },
-        { value = 1,  label = "Hard Sax 2" },
-        { value = 2,  label = "Hard Sax 3" },
-        { value = 3,  label = "Soft Sax 1" },
-        { value = 4,  label = "Soft Sax 2" },
-        { value = 5,  label = "DoubleReed 1" },
-        { value = 6,  label = "DoubleReed 2" },
-        { value = 7,  label = "Bassoon" },
-        { value = 8,  label = "Clarinet" },
-        { value = 9,  label = "Flute 1" },
-        { value = 10, label = "Flute 2" },
-        { value = 11, label = "PanFlute" },
-        { value = 12, label = "Ocarina" },
-        { value = 13, label = "Shakuhachi" },
-        { value = 14, label = "Harmonica 1" },
-        { value = 15, label = "Harmonica 2" },
-        { value = 16, label = "ReedSynth" },
-    },
-    [OV.OFF_ON] = {
-        { value = 0, label = "OFF" },
-        { value = 1, label = "ON" },
-    },
-}
-
-local function num(id, name, min, max, fmt, color)
-    return { id = id, name = name, kind = "num", min = min, max = max, fmt = fmt, color = color or WHITE }
-end
-
-local function lst(id, name, ov, color)
-    local c = color or (ov == OV.MODSRC1 and BLUE or PURPLE)
-    return { id = id, name = name, kind = "list", ov = ov, color = c }
-end
+local ENUM_DEFS = {}
 
 local function mod1(id, name)
     return lst(id, name, OV.MODSRC1, BLUE)
 end
 
-local function mint(id, name, min, max)
-    return num(id, name, min or -99, max or 99, nil, GREEN)
-end
-
--- Build model table parameterized by Comb/VPM/OSC input overlay IDs (for OSC1 vs OSC2)
 local function buildModels(combOv, vpmOv, oscInOv, includePhysical)
     local m = {
         [0] = {
@@ -2714,36 +2964,46 @@ end
 OSC1_MODELS = buildModels(OV.COMB_IN_1, OV.VPM_MOD_W_1, OV.OSC_IN_5_1, true)
 OSC2_MODELS = buildModels(OV.COMB_IN_2, OV.VPM_MOD_W_2, OV.OSC_IN_5_2, false)
 
--- Map Page 1 Control ID -> Z1 Program Parameter ID (ExID = 0)
 local CTRL_PARAM = {
-    [2]  = 174, -- OSC1 Type
-    [3]  = 175, -- OSC1 Octave
-    [4]  = 176, -- OSC1 Semitone
-    [5]  = 177, -- OSC1 Fine
-    [6]  = 178, -- OSC1 Pitch Offset
-    [8]  = 188, -- OSC2 Type
-    [9]  = 189, -- OSC2 Octave
-    [10] = 190, -- OSC2 Semitone
-    [11] = 191, -- OSC2 Fine
-    [12] = 192, -- OSC2 Pitch Offset
-    [13] = 179, -- OSC1 Pitch Slope Center Key
-    [14] = 180, -- OSC1 Pitch Low Slope
-    [15] = 181, -- OSC1 Pitch High Slope
-    [16] = 186, -- OSC1 Pitch Mod2 Source
-    [17] = 187, -- OSC1 Pitch Mod2 Intensity
-    [19] = 193, -- OSC2 Pitch Slope Center Key
-    [20] = 194, -- OSC2 Pitch Low Slope
-    [21] = 195, -- OSC2 Pitch High Slope
-    [22] = 200, -- OSC2 Pitch Mod2 Source
-    [23] = 201, -- OSC2 Pitch Mod2 Intensity
-    [25] = 182, -- OSC1 Pitch Mod1 Source
-    [26] = 183, -- OSC1 Pitch Mod1 Intensity
-    [27] = 184, -- OSC1 Pitch Mod1 DynamicMod Source
-    [28] = 185, -- OSC1 Pitch Mod1 DynamicMod Intensity
-    [31] = 196, -- OSC2 Pitch Mod1 Source
-    [32] = 197, -- OSC2 Pitch Mod1 Intensity
-    [33] = 198, -- OSC2 Pitch Mod1 DynamicMod Source
-    [34] = 199, -- OSC2 Pitch Mod1 DynamicMod Intensity
+    [2]  = 174,
+    [3]  = 175,
+    [4]  = 176,
+    [5]  = 177,
+    [6]  = 178,
+    [8]  = 188,
+    [9]  = 189,
+    [10] = 190,
+    [11] = 191,
+    [12] = 192,
+    [13] = 179,
+    [14] = 180,
+    [15] = 181,
+    [16] = 186,
+    [17] = 187,
+    [19] = 193,
+    [20] = 194,
+    [21] = 195,
+    [22] = 200,
+    [23] = 201,
+    [25] = 182,
+    [26] = 183,
+    [27] = 184,
+    [28] = 185,
+    [31] = 196,
+    [32] = 197,
+    [33] = 198,
+    [34] = 199,
+}
+
+local CTRL_OV = {
+    [3]  = OV.OCTAVE,
+    [9]  = OV.OCTAVE,
+    [16] = OV.MODSRC1,
+    [22] = OV.MODSRC1,
+    [25] = OV.MODSRC1,
+    [27] = OV.MODSRC1,
+    [31] = OV.MODSRC1,
+    [33] = OV.MODSRC1,
 }
 
 selectedOsc1Model = 0
@@ -2756,191 +3016,99 @@ local activeOsc2SlotDef = {}
 local suppressSlot = {}
 oscSaved = {}
 
-function getOsc1ModelName()
-    local item = OSC1_TYPES[selectedOsc1Model + 1]
-    return item and item.label or "Standard OSC"
+function getOscModelName(oscIdx)
+    local isOsc2 = (oscIdx == 2)
+    local sel = isOsc2 and selectedOsc2Model or selectedOsc1Model
+    local ov = overlays.get(isOsc2 and OV.OSC2_TYPE or OV.OSC1_TYPE)
+    return (ov and ov.getLabelByIndex and ov:getLabelByIndex(sel)) or "Standard OSC"
 end
 
-function getOsc2ModelName()
-    local item = OSC2_TYPES[selectedOsc2Model + 1]
-    return item and item.label or "Standard OSC"
-end
-
--- ============================================================================
--- 2. SysEx Builder & Sender
--- ============================================================================
-
-local function sendParamChange(exId, paramId, signedVal)
-    local dev = preset.getDevice(DEVICE_ID)
-    local body = buildParamChangeBody(exId, paramId, signedVal)
-    if dev then
-        dev:sendSysex(body)
-    else
-        midi.sendSysex(PORT_1, body)
-    end
-end
-
--- ============================================================================
--- 3. Custom Paint Callbacks & Dynamic Page Relayout (Pages 2 & 3)
--- ============================================================================
-
-function paintOsc1Model(control)
+function paintOscModel(control)
+    local isOsc2 = (__LID(control:getId()) == 8)
     local bounds = control:getBounds()
     local w = bounds[WIDTH]
     local h = bounds[HEIGHT]
     graphics.setColor(0x18202C)
     graphics.fillRect(0, 0, w, h)
-    graphics.setColor(0xF49500)
+    graphics.setColor(isOsc2 and 0x529DEC or 0xF49500)
     graphics.drawRect(0, 0, w, h)
 
-    graphics.setColor(ORANGE)
-    graphics.print(6, 3, string.format("OSC1 MODEL [%02d]", selectedOsc1Model), w - 12, LEFT, REGULAR, SMALL)
+    local sel = isOsc2 and selectedOsc2Model or selectedOsc1Model
+    graphics.setColor(isOsc2 and 0x529DEC or ORANGE)
+    graphics.print(6, 3, string.format("OSC%d MODEL [%02d]", isOsc2 and 2 or 1, sel), w - 12, LEFT, REGULAR, SMALL)
 
     graphics.setColor(WHITE)
-    graphics.print(6, 23, getOsc1ModelName(), w - 12, LEFT, BOLD, MEDIUM)
-end
-
-function paintOsc2Model(control)
-    local bounds = control:getBounds()
-    local w = bounds[WIDTH]
-    local h = bounds[HEIGHT]
-    graphics.setColor(0x18202C)
-    graphics.fillRect(0, 0, w, h)
-    graphics.setColor(0x529DEC)
-    graphics.drawRect(0, 0, w, h)
-
-    graphics.setColor(0x529DEC)
-    graphics.print(6, 3, string.format("OSC2 MODEL [%02d]", selectedOsc2Model), w - 12, LEFT, REGULAR, SMALL)
-
-    graphics.setColor(WHITE)
-    graphics.print(6, 23, getOsc2ModelName(), w - 12, LEFT, BOLD, MEDIUM)
+    graphics.print(6, 23, getOscModelName(isOsc2 and 2 or 1), w - 12, LEFT, BOLD, MEDIUM)
 end
 
 local function repaintModelWidgets()
-    local c1 = preset.getControl(2)
-    if c1 then
-        c1:repaint()
-    end
-    local c2 = preset.getControl(8)
-    if c2 then
-        c2:repaint()
+    for _, cid in ipairs({ 2, 8 }) do
+        local c = preset.getControl(cid)
+        if c then c:repaint() end
     end
 end
 
-local function applyDynamicOscPage(pageId, grpId, prefix, modelName, defs, exId, faderBase, listBase, slotDefMap)
+function applyOscModel(oscIdx, modelIdx)
+    local isOsc2 = (oscIdx == 2)
+    local models = isOsc2 and OSC2_MODELS or OSC1_MODELS
+    local defs = models[modelIdx]
     if not defs then
         return
     end
+    if isOsc2 then
+        selectedOsc2Model = modelIdx
+    else
+        selectedOsc1Model = modelIdx
+    end
+    suppressModelCallback = true
+    for _, cid in ipairs(isOsc2 and { 8, 601 } or { 2, 301 }) do
+        local c = controls.get(cid)
+        if c then c:getValue("value"):updateValue(modelIdx) end
+    end
+    suppressModelCallback = false
+
+    local pageId     = isOsc2 and OSC2_PAGE_ID or OSC1_PAGE_ID
+    local grpId      = isOsc2 and 70 or 60
+    local prefix     = isOsc2 and "OSC2" or "OSC1"
+    local faderBase  = isOsc2 and 700 or 400
+    local listBase   = isOsc2 and 800 or 500
+    local slotDefMap = isOsc2 and activeOsc2SlotDef or activeOsc1SlotDef
     for k in pairs(slotDefMap) do
         slotDefMap[k] = nil
     end
     if window and window.stop then
         window.stop()
     end
-    local header = prefix .. " - " .. modelName
+    local header = prefix .. " - " .. getOscModelName(oscIdx)
     if pages and pages.get then
         local pg = pages.get(pageId)
-        if pg and pg.setName then
+        if pg and pg.setName and (not pg.getName or pg:getName() ~= header) then
             pg:setName(header)
         end
     end
     local grp = preset.getGroup(grpId)
-    if grp then
+    if grp and (not grp.getLabel or grp:getLabel() ~= header) then
         grp:setLabel(header)
     end
 
-    for slot = 3, 36 do
-        local def = defs[slot - 2]
-        local fid = faderBase + slot
-        local lid = listBase + slot
-        local fader = controls.get(fid)
-        local list  = controls.get(lid)
-        if fader and list then
-            if not def then
-                fader:setVisible(false)
-                list:setVisible(false)
-            elseif def.kind == "list" then
-                slotDefMap[slot] = def
-                fader:setVisible(false)
-                local key = (exId << 11) | def.id
-                local initVal = oscSaved[key] or 0
-                local valObj = list:getValue("value")
-                valObj:setOverlayId(__OV(def.ov))
-                suppressSlot[lid] = true
-                valObj:updateValue(initVal)
-                suppressSlot[lid] = nil
-                list:setName(def.name)
-                list:setColor(def.color or PURPLE)
-                list:setVisible(true)
-            else
-                slotDefMap[slot] = def
-                list:setVisible(false)
-                local key = (exId << 11) | def.id
-                local neutral = (def.min < 0 and def.max > 0) and 0 or def.min
-                local initVal = oscSaved[key]
-                if initVal == nil then initVal = neutral end
-                local valObj = fader:getValue("value")
-                local span = def.max - def.min
-                valObj:getMessage():setRange(0, span)
-                valObj:setRange(def.min, def.max, neutral, false)
-                suppressSlot[fid] = true
-                valObj:updateValue(initVal)
-                suppressSlot[fid] = nil
-                fader:setName(def.name)
-                fader:setColor(def.color or WHITE)
-                fader:setVisible(true)
-            end
-        end
-    end
+    applyDynamicSlots(defs, 3, 36, 2, faderBase, listBase, slotDefMap, oscSaved, oscIdx, suppressSlot)
     if window and window.resume then
         window.resume()
     end
-end
-
-function applyOsc1Model(modelIdx)
-    if not OSC1_MODELS[modelIdx] then
-        return
-    end
-    selectedOsc1Model = modelIdx
-    suppressModelCallback = true
-    local c2 = controls.get(2)
-    if c2 then c2:getValue("value"):updateValue(modelIdx) end
-    local c301 = controls.get(301)
-    if c301 then c301:getValue("value"):updateValue(modelIdx) end
-    suppressModelCallback = false
-    applyDynamicOscPage(OSC1_PAGE_ID, 60, "OSC1", getOsc1ModelName(), OSC1_MODELS[modelIdx], 1, 400, 500, activeOsc1SlotDef)
     repaintModelWidgets()
-end
-
-function applyOsc2Model(modelIdx)
-    if not OSC2_MODELS[modelIdx] then
-        return
+    if oscPresetView and showOscPresetManager then
+        showOscPresetManager()
     end
-    selectedOsc2Model = modelIdx
-    suppressModelCallback = true
-    local c8 = controls.get(8)
-    if c8 then c8:getValue("value"):updateValue(modelIdx) end
-    local c601 = controls.get(601)
-    if c601 then c601:getValue("value"):updateValue(modelIdx) end
-    suppressModelCallback = false
-    applyDynamicOscPage(OSC2_PAGE_ID, 70, "OSC2", getOsc2ModelName(), OSC2_MODELS[modelIdx], 2, 700, 800, activeOsc2SlotDef)
-    repaintModelWidgets()
 end
 
 function setOscModelsFromDump(osc1Type, osc2Type)
     if type(osc1Type) == "number" and osc1Type >= 0 and osc1Type <= 12 then
-        applyOsc1Model(osc1Type)
+        applyOscModel(1, osc1Type)
     end
     if type(osc2Type) == "number" and osc2Type >= 0 and osc2Type <= 8 then
-        applyOsc2Model(osc2Type)
+        applyOscModel(2, osc2Type)
     end
 end
-
--- ============================================================================
--- 4. Formatters & Control Callbacks
--- ============================================================================
-
- NOTE_NAMES = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" }
 
 function fmtHz10(_valueObject, value)
     return string.format("%+.1f Hz", math.floor(value) / 10.0)
@@ -2957,117 +3125,64 @@ function fmtNote(_valueObject, value)
     return string.format("%s%d", n, oct)
 end
 
-local function fmtModelSlot(slotDefMap, valueObject, value)
+function fmtOscSlot(valueObject, value)
     local ctrlId = __LID(valueObject:getControl():getId())
-    local slot = ctrlId % 100
-    local def = slotDefMap[slot]
+    local slotDefMap = (ctrlId >= 600) and activeOsc2SlotDef or activeOsc1SlotDef
+    return formatSlotValue(slotDefMap[ctrlId % 50], value)
+end
+
+function onJumpPage(valueObject, value)
+    if suppressJumpPad or math.floor(value) <= 0 then
+        return
+    end
+    suppressJumpPad = true
+    if valueObject and valueObject.updateValue then
+        valueObject:updateValue(0)
+    end
+    suppressJumpPad = false
+    local ctrlId = __LID(valueObject:getControl():getId())
+    local targetPageId, label
+    if ctrlId == 1 then
+        targetPageId = OSC1_PAGE_ID
+        label = "Jump -> OSC 1 (" .. getOscModelName(1) .. ")"
+    elseif ctrlId == 7 then
+        targetPageId = OSC2_PAGE_ID
+        label = "Jump -> OSC 2 (" .. getOscModelName(2) .. ")"
+    else
+        targetPageId = OSC_COMMON_PAGE_ID
+        label = "Jump -> OSC Common"
+    end
+    lastJumpedPage = targetPageId
+    if pages and pages.display then
+        pages.display(targetPageId)
+    end
+    info.setText(label)
+end
+
+function onOscType(valueObject, value)
+    if suppressModelCallback then
+        return
+    end
+    local ctrlId = __LID(valueObject:getControl():getId())
+    local isOsc2 = (ctrlId == 8 or ctrlId == 601)
+    local oscIdx = isOsc2 and 2 or 1
+    local maxType = isOsc2 and 8 or 12
     local v = math.floor(value)
-    if not def or not def.fmt then
-        return tostring(v)
-    end
-    if def.fmt == "plus1" then
-        return tostring(v + 1)
-    elseif def.fmt == "coarse" then
-        return v == 0 and "0.5" or tostring(v)
-    elseif def.fmt == "offneg" then
-        return v < 0 and "OFF" or tostring(v)
-    elseif def.fmt == "db" then
-        return string.format("%+d dB", v)
-    elseif def.fmt == "note" then
-        return fmtNote(valueObject, v)
-    end
-    return tostring(v)
-end
-
-function fmtOsc1Slot(valueObject, value)
-    return fmtModelSlot(activeOsc1SlotDef, valueObject, value)
-end
-
-function fmtOsc2Slot(valueObject, value)
-    return fmtModelSlot(activeOsc2SlotDef, valueObject, value)
-end
-
-local function jumpToPage(valueObject, value, targetPageId, label)
-    if suppressJumpPad then
-        return
-    end
-    if math.floor(value) > 0 then
-        suppressJumpPad = true
-        if valueObject and valueObject.updateValue then
-            valueObject:updateValue(0)
+    if ctrlId == 301 or ctrlId == 601 then
+        local ov = overlays.get(isOsc2 and OV.OSC2_TYPE or OV.OSC1_TYPE)
+        v = (ov and ov:getValueByIndex(v)) or v
+        if v < 0 or v > maxType then
+            return
         end
-        suppressJumpPad = false
-        lastJumpedPage = targetPageId
-        if pages and pages.display then
-            pages.display(targetPageId)
-        end
-        info.setText(label)
+    else
+        v = math.max(0, math.min(maxType, v))
     end
+    sendParamChange(0, isOsc2 and 188 or 174, v)
+    applyOscModel(oscIdx, v)
+    info.setText("OSC" .. oscIdx .. ": " .. getOscModelName(oscIdx))
 end
 
-function onJumpOsc1(valueObject, value)
-    jumpToPage(valueObject, value, OSC1_PAGE_ID, "Jump -> OSC 1 (" .. getOsc1ModelName() .. ")")
-end
-
-function onJumpOsc2(valueObject, value)
-    jumpToPage(valueObject, value, OSC2_PAGE_ID, "Jump -> OSC 2 (" .. getOsc2ModelName() .. ")")
-end
-
-function onJumpOscCommon(valueObject, value)
-    jumpToPage(valueObject, value, OSC_COMMON_PAGE_ID, "Jump -> OSC Common")
-end
-
-function onOsc1Model(_valueObject, value)
-    if suppressModelCallback then
-        return
-    end
-    local v = math.max(0, math.min(12, math.floor(value)))
-    sendParamChange(0, 174, v)
-    applyOsc1Model(v)
-    info.setText("OSC1: " .. getOsc1ModelName())
-end
-
-function onOsc2Model(_valueObject, value)
-    if suppressModelCallback then
-        return
-    end
-    local v = math.max(0, math.min(8, math.floor(value)))
-    sendParamChange(0, 188, v)
-    applyOsc2Model(v)
-    info.setText("OSC2: " .. getOsc2ModelName())
-end
-
-function onOsc1Type(_valueObject, value)
-    if suppressModelCallback then
-        return
-    end
-    local idx = math.floor(value)
-    local ov = overlays.get(OV.OSC1_TYPE)
-    local z1Type = (ov and ov:getValueByIndex(idx)) or idx
-    if z1Type < 0 or z1Type > 12 then
-        return
-    end
-    sendParamChange(0, 174, z1Type)
-    applyOsc1Model(z1Type)
-    info.setText("OSC1: " .. getOsc1ModelName())
-end
-
-function onOsc2Type(_valueObject, value)
-    if suppressModelCallback then
-        return
-    end
-    local idx = math.floor(value)
-    local ov = overlays.get(OV.OSC2_TYPE)
-    local z1Type = (ov and ov:getValueByIndex(idx)) or idx
-    if z1Type < 0 or z1Type > 8 then
-        return
-    end
-    sendParamChange(0, 188, z1Type)
-    applyOsc2Model(z1Type)
-    info.setText("OSC2: " .. getOsc2ModelName())
-end
-
-local function handleDynamicSlot(exId, slotDefMap, valueObject, value)
+function onOscSlot(valueObject, value)
     local ctrl = valueObject:getControl()
     local ctrlId = __LID(ctrl:getId())
     if suppressSlot[ctrlId] then
@@ -3077,14 +3192,15 @@ local function handleDynamicSlot(exId, slotDefMap, valueObject, value)
     if not ctrl:isVisible() then
         return
     end
-    local slot = ctrlId % 100
-    local def = slotDefMap[slot]
+    local isOsc2 = (ctrlId >= 600)
+    local exId = isOsc2 and 2 or 1
+    local slotDefMap = isOsc2 and activeOsc2SlotDef or activeOsc1SlotDef
+    local def = slotDefMap[ctrlId % 50]
     if not def then
         return
     end
     local rawVal = math.floor(value)
-    local key = (exId << 11) | def.id
-    oscSaved[key] = rawVal
+    oscSaved[(exId << 11) | def.id] = rawVal
 
     local z1Val = rawVal
     if def.kind == "list" then
@@ -3094,113 +3210,490 @@ local function handleDynamicSlot(exId, slotDefMap, valueObject, value)
     sendParamChange(exId, def.id, z1Val)
 end
 
-function onOsc1Slot(valueObject, value)
-    handleDynamicSlot(1, activeOsc1SlotDef, valueObject, value)
-end
-
-function onOsc2Slot(valueObject, value)
-    handleDynamicSlot(2, activeOsc2SlotDef, valueObject, value)
-end
-
-function onOctave(valueObject, value)
-    local ctrlId = __LID(valueObject:getControl():getId())
-    local paramId = CTRL_PARAM[ctrlId]
-    if not paramId then
-        return
-    end
-    local idx = math.floor(value)
-    local ov = overlays.get(OV.OCTAVE)
-    local z1Val = (ov and ov:getValueByIndex(idx)) or idx
-    sendParamChange(0, paramId, z1Val)
-end
-
-function onModSrc1(valueObject, value)
-    local ctrlId = __LID(valueObject:getControl():getId())
-    local paramId = CTRL_PARAM[ctrlId]
-    if not paramId then
-        return
-    end
-    local idx = math.floor(value)
-    local ov = overlays.get(OV.MODSRC1)
-    local z1Val = (ov and ov:getValueByIndex(idx)) or idx
-    sendParamChange(0, paramId, z1Val)
-end
+local COMMON_CTRLS = {
+    [1] = { 3, 4, 5, 6, 13, 14, 15, 16, 17, 25, 26, 27, 28 },
+    [2] = { 9, 10, 11, 12, 19, 20, 21, 22, 23, 31, 32, 33, 34 },
+}
+local COMMON_DEF_VAL = {
+    [3] = 2, [4] = 0, [5] = 0, [6] = 0, [13] = 60, [14] = 0, [15] = 0, [16] = 0, [17] = 0, [25] = 0, [26] = 0, [27] = 0, [28] = 0,
+    [9] = 2, [10] = 0, [11] = 0, [12] = 0, [19] = 60, [20] = 0, [21] = 0, [22] = 0, [23] = 0, [31] = 0, [32] = 0, [33] = 0, [34] = 0,
+}
+commonSaved = {}
+for cid, dv in pairs(COMMON_DEF_VAL) do commonSaved[cid] = dv end
 
 function onParam(valueObject, value)
+    if suppressOscPreset then return end
     local ctrlId = __LID(valueObject:getControl():getId())
     local paramId = CTRL_PARAM[ctrlId]
     if not paramId then
         return
     end
-    sendParamChange(0, paramId, math.floor(value))
+    local z1Val = math.floor(value)
+    local ovId = CTRL_OV[ctrlId]
+    if ovId then
+        local ov = overlays.get(ovId)
+        z1Val = (ov and ov:getValueByIndex(z1Val)) or z1Val
+    end
+    commonSaved[ctrlId] = z1Val
+    sendParamChange(0, paramId, z1Val)
 end
 
--- ============================================================================
--- 5. Lifecycle Hooks
--- ============================================================================
+OSC_UNIT_PRESET_SLOTS = 8
+OSC_DUAL_PRESET_SLOTS = 25
+OSC_COMMON_CS3_CTRLS  = { 25, 26, 27, 28, 31, 32, 33, 34 }
+OSC_PRESET_CTRLS      = { 35, 36, 37, 38, 39, 40, 41, 42, 43 }
+
+z1PersistLib = _G.z1PersistLib or { version = 2, unit = {}, chain = {}, tuning = {}, oscUnit = {}, oscDual = {} }
+_G.z1PersistLib = z1PersistLib
+z1PersistLib.oscUnit = z1PersistLib.oscUnit or {}
+z1PersistLib.oscDual = z1PersistLib.oscDual or {}
+
+oscPresetView    = false
+oscPresetTarget  = 0
+oscPresetSlot    = 1
+oscPresetNamePos = 1
+oscPresetName    = {}
+suppressOscPreset = false
+local shownOscPresetBank = nil
+local pendingOscDelete   = nil
+
+local function oscPresetBankKey()
+    if oscPresetTarget == 2 then return "dual" end
+    local modelIdx = (oscPresetTarget == 1) and selectedOsc2Model or selectedOsc1Model
+    return "osc" .. tostring(modelIdx or 0)
+end
+
+local function oscPresetSlotCount()
+    return (oscPresetTarget == 2) and OSC_DUAL_PRESET_SLOTS or OSC_UNIT_PRESET_SLOTS
+end
+
+local function getOscPresetEntry(slot)
+    local key = "s" .. tostring(slot)
+    if oscPresetTarget == 2 then
+        return z1PersistLib.oscDual[key]
+    end
+    local bank = z1PersistLib.oscUnit[oscPresetBankKey()]
+    return (type(bank) == "table") and bank[key] or nil
+end
+
+local function setOscPresetEntry(slot, entry)
+    local key = "s" .. tostring(slot)
+    if oscPresetTarget == 2 then
+        z1PersistLib.oscDual[key] = entry
+    else
+        local bk = oscPresetBankKey()
+        if type(z1PersistLib.oscUnit[bk]) ~= "table" then z1PersistLib.oscUnit[bk] = {} end
+        z1PersistLib.oscUnit[bk][key] = entry
+    end
+end
+
+local function defaultOscPresetName(slot)
+    if oscPresetTarget == 2 then
+        return string.format("Dual OSC %02d", slot)
+    end
+    local mName = getOscModelName(oscPresetTarget + 1)
+    return string.format("%s %d", string.sub(mName, 1, 13), slot)
+end
+
+local function oscPresetHeader()
+    if oscPresetTarget == 2 then
+        return string.format("BOTH OSC1+OSC2 PRESETS (%d)", OSC_DUAL_PRESET_SLOTS)
+    end
+    local oscIdx = oscPresetTarget + 1
+    return string.format("OSC%d %s PRESETS (%d)",
+        oscIdx, string.upper(getOscModelName(oscIdx)), OSC_UNIT_PRESET_SLOTS)
+end
+
+local function defaultOscDefRaw(def)
+    if def.kind == "list" then return 0 end
+    return (def.min < 0 and def.max > 0) and 0 or def.min
+end
+
+local function captureOscCommon(oscIdx)
+    local out = {}
+    for i, cid in ipairs(COMMON_CTRLS[oscIdx]) do
+        out[i] = commonSaved[cid] or COMMON_DEF_VAL[cid] or 0
+    end
+    return out
+end
+
+local function applyOscCommon(oscIdx, vals)
+    if type(vals) ~= "table" then return end
+    for i, cid in ipairs(COMMON_CTRLS[oscIdx]) do
+        local z1Val = vals[i]
+        if type(z1Val) == "number" then
+            commonSaved[cid] = z1Val
+            local pid = CTRL_PARAM[cid]
+            if pid then sendParamChange(0, pid, z1Val) end
+            local c = controls.get(cid)
+            if c then
+                local ovId = CTRL_OV[cid]
+                local disp = ovId and z1ValToIdx(ovId, z1Val) or z1Val
+                suppressOscPreset = true
+                c:getValue("value"):updateValue(disp)
+                suppressOscPreset = false
+            end
+        end
+    end
+end
+
+local function captureOscUnitValues(oscIdx, modelIdx)
+    local models = (oscIdx == 2) and OSC2_MODELS or OSC1_MODELS
+    local defs = models[modelIdx] or {}
+    local v = {}
+    for i, d in ipairs(defs) do
+        local raw = oscSaved[(oscIdx << 11) | d.id]
+        if raw == nil then raw = defaultOscDefRaw(d) end
+        if d.kind == "list" then
+            local ov = overlays.get(d.ov)
+            v[i] = (ov and ov:getValueByIndex(raw)) or raw
+        else
+            v[i] = raw
+        end
+    end
+    return v
+end
+
+local function applyOscUnitValues(oscIdx, modelIdx, v)
+    local models = (oscIdx == 2) and OSC2_MODELS or OSC1_MODELS
+    local defs = models[modelIdx] or {}
+    for i, d in ipairs(defs) do
+        local z1Val = (type(v) == "table") and v[i] or nil
+        if type(z1Val) == "number" then
+            local raw = (d.kind == "list") and z1ValToIdx(d.ov, z1Val) or z1Val
+            oscSaved[(oscIdx << 11) | d.id] = raw
+            sendParamChange(oscIdx, d.id, z1Val)
+        end
+    end
+    applyOscModel(oscIdx, modelIdx)
+end
+
+local function repaintOscPresetList()
+    if not oscPresetView then return end
+    local c = preset.getControl(37)
+    if c then c:repaint() end
+end
+
+local function syncOscNameChar()
+    local c = controls.get(41)
+    if c then
+        suppressOscPreset = true
+        c:getValue("value"):updateValue(oscPresetName[oscPresetNamePos] or 0x20)
+        suppressOscPreset = false
+    end
+end
+
+local function selectOscPresetSlot(slot)
+    local n = oscPresetSlotCount()
+    oscPresetSlot = math.max(1, math.min(n, slot))
+    pendingOscDelete = nil
+    local e = getOscPresetEntry(oscPresetSlot)
+    setNameCharsBuffer(oscPresetName, (e and e.name) or defaultOscPresetName(oscPresetSlot), 0x7E)
+    syncOscNameChar()
+    repaintOscPresetList()
+end
+
+function showOscPresetManager()
+    window.stop()
+    for _, cid in ipairs(OSC_COMMON_CS3_CTRLS) do
+        local c = controls.get(cid)
+        if c and c:isVisible() then c:setVisible(false) end
+    end
+    for _, cid in ipairs(OSC_PRESET_CTRLS) do
+        local c = controls.get(cid)
+        if c and not c:isVisible() then c:setVisible(true) end
+    end
+    local grp3 = preset.getGroup(52)
+    if grp3 then grp3:setLabel("OSC PRESET LIBRARY - " .. oscPresetHeader()) end
+
+    local n = oscPresetSlotCount()
+    local slotCtrl = controls.get(36)
+    if slotCtrl then
+        local vo = slotCtrl:getValue("value")
+        vo:getMessage():setRange(0, n - 1)
+        vo:setRange(1, n, 1, false)
+    end
+    local bank = oscPresetBankKey()
+    if bank ~= shownOscPresetBank then
+        shownOscPresetBank = bank
+        selectOscPresetSlot(oscPresetSlot)
+    end
+    suppressOscPreset = true
+    if slotCtrl then slotCtrl:getValue("value"):updateValue(oscPresetSlot) end
+    local tgt = controls.get(35)
+    if tgt then tgt:getValue("value"):updateValue(oscPresetTarget) end
+    local posCtrl = controls.get(40)
+    if posCtrl then posCtrl:getValue("value"):updateValue(oscPresetNamePos) end
+    suppressOscPreset = false
+    syncOscNameChar()
+    repaintOscPresetList()
+    window.resume()
+end
+
+function setOscPresetView(on)
+    oscPresetView = on and true or false
+    pendingOscDelete = nil
+    local pad = controls.get(24)
+    if pad then
+        suppressOscPreset = true
+        pad:getValue("value"):updateValue(oscPresetView and 1 or 0)
+        suppressOscPreset = false
+    end
+    if oscPresetView then
+        showOscPresetManager()
+        return
+    end
+    window.stop()
+    for _, cid in ipairs(OSC_PRESET_CTRLS) do
+        local c = controls.get(cid)
+        if c and c:isVisible() then c:setVisible(false) end
+    end
+    for _, cid in ipairs(OSC_COMMON_CS3_CTRLS) do
+        local c = controls.get(cid)
+        if c and not c:isVisible() then c:setVisible(true) end
+    end
+    local grp3 = preset.getGroup(52)
+    if grp3 then grp3:setLabel("OSC 1 & OSC 2 - PITCH MODULATION 1 & DYNAMIC CONTROLLER") end
+    window.resume()
+end
+
+function paintOscPresetList(control)
+    local b = control:getBounds()
+    local w, h = b[WIDTH], b[HEIGHT]
+    graphics.setColor(0x18202C)
+    graphics.fillRect(0, 0, w, h)
+    graphics.setColor(0x03A598)
+    graphics.drawRect(0, 0, w, h)
+
+    graphics.setColor(ORANGE)
+    graphics.print(6, 3, oscPresetHeader(), w - 12, LEFT)
+
+    local chars = {}
+    for i = 1, 16 do
+        local ch = string.char(oscPresetName[i] or 0x20)
+        chars[i] = (i == oscPresetNamePos) and ("[" .. ch .. "]") or ch
+    end
+    graphics.setColor(WHITE)
+    graphics.print(6, 21, "Name: " .. table.concat(chars), w - 12, LEFT)
+
+    local n = oscPresetSlotCount()
+    local rows = 6
+    local first = math.max(1, math.min(oscPresetSlot - 2, n - rows + 1))
+    for r = 0, rows - 1 do
+        local s = first + r
+        if s > n then break end
+        local y = 40 + r * 17
+        local e = getOscPresetEntry(s)
+        if s == oscPresetSlot then
+            graphics.setColor(0x03A598)
+            graphics.fillRect(2, y - 1, w - 4, 17)
+            graphics.setColor(0x000000)
+        else
+            graphics.setColor(e and WHITE or 0x7A8290)
+        end
+        graphics.print(8, y, string.format("%02d  %s", s, (e and e.name) or "- empty -"), w - 16, LEFT)
+    end
+end
+
+function onOscPresetView(_valueObject, value)
+    if suppressOscPreset then return end
+    local on = math.floor(value) > 0
+    if on ~= oscPresetView then
+        setOscPresetView(on)
+    end
+end
+
+function onOscPresetTarget(_valueObject, value)
+    if suppressOscPreset then return end
+    local t = math.max(0, math.min(2, math.floor(value)))
+    if t == oscPresetTarget then return end
+    oscPresetTarget = t
+    shownOscPresetBank = nil
+    if oscPresetView then showOscPresetManager() end
+    info.setText(oscPresetHeader())
+end
+
+function onOscPresetSlot(_valueObject, value)
+    if suppressOscPreset then return end
+    selectOscPresetSlot(math.floor(value))
+end
+
+function fmtOscPresetSlot(_valueObject, value)
+    local s = math.floor(value)
+    local e = getOscPresetEntry(s)
+    return string.format("%02d %s", s, (e and e.name) or "<empty>")
+end
+
+function onOscNamePos(_valueObject, value)
+    oscPresetNamePos = math.max(1, math.min(16, math.floor(value)))
+    syncOscNameChar()
+    repaintOscPresetList()
+end
+
+function onOscNameChar(_valueObject, value)
+    if suppressOscPreset then return end
+    local c = math.max(0x20, math.min(0x7E, math.floor(value)))
+    oscPresetName[oscPresetNamePos] = c
+    repaintOscPresetList()
+end
+
+function onOscPresetSave(_valueObject, value)
+    if math.floor(value) <= 0 then return end
+    pendingOscDelete = nil
+    local name = getProgramNameString(oscPresetName, true)
+    if name == "" then name = defaultOscPresetName(oscPresetSlot) end
+    local entry
+    if oscPresetTarget == 2 then
+        entry = {
+            name  = name,
+            types = { selectedOsc1Model, selectedOsc2Model },
+            c1    = captureOscCommon(1),
+            c2    = captureOscCommon(2),
+            v1    = captureOscUnitValues(1, selectedOsc1Model),
+            v2    = captureOscUnitValues(2, selectedOsc2Model),
+        }
+    else
+        local oscIdx = oscPresetTarget + 1
+        local mIdx = (oscIdx == 2) and selectedOsc2Model or selectedOsc1Model
+        entry = {
+            name  = name,
+            model = mIdx,
+            c     = captureOscCommon(oscIdx),
+            v     = captureOscUnitValues(oscIdx, mIdx),
+        }
+    end
+    setOscPresetEntry(oscPresetSlot, entry)
+    local ok = (type(persist) == "function") and pcall(persist, z1PersistLib) or false
+    repaintOscPresetList()
+    info.setText(string.format("Saved %02d: %s%s", oscPresetSlot, name, ok and "" or " (RAM)"))
+end
+
+function onOscPresetLoad(_valueObject, value)
+    if math.floor(value) <= 0 then return end
+    pendingOscDelete = nil
+    local e = getOscPresetEntry(oscPresetSlot)
+    if not e then
+        info.setText(string.format("Slot %02d is empty", oscPresetSlot))
+        return
+    end
+    if oscPresetTarget == 2 then
+        local t1 = (type(e.types) == "table" and type(e.types[1]) == "number") and e.types[1] or e.model
+        if type(t1) == "number" then
+            selectedOsc1Model = t1
+            sendParamChange(0, 174, t1)
+            applyOscCommon(1, e.c1 or e.c)
+            applyOscUnitValues(1, t1, e.v1 or e.v)
+        end
+        local t2 = (type(e.types) == "table") and e.types[2] or nil
+        if type(t2) == "number" and type(e.v2) == "table" then
+            selectedOsc2Model = t2
+            sendParamChange(0, 188, t2)
+            applyOscCommon(2, e.c2)
+            applyOscUnitValues(2, t2, e.v2)
+        end
+    else
+        local oscIdx = oscPresetTarget + 1
+        local mIdx = (oscIdx == 2) and selectedOsc2Model or selectedOsc1Model
+        applyOscCommon(oscIdx, e.c)
+        applyOscUnitValues(oscIdx, mIdx, e.v)
+    end
+    shownOscPresetBank = nil
+    if oscPresetView then showOscPresetManager() end
+    info.setText("Loaded: " .. tostring(e.name))
+end
+
+function onOscPresetRename(_valueObject, value)
+    if math.floor(value) <= 0 then return end
+    pendingOscDelete = nil
+    local e = getOscPresetEntry(oscPresetSlot)
+    if not e then
+        info.setText("Slot empty - use Save")
+        return
+    end
+    local name = getProgramNameString(oscPresetName, true)
+    if name == "" then name = defaultOscPresetName(oscPresetSlot) end
+    e.name = name
+    if type(persist) == "function" then pcall(persist, z1PersistLib) end
+    repaintOscPresetList()
+    info.setText("Renamed: " .. name)
+end
+
+function onOscPresetDelete(_valueObject, value)
+    if math.floor(value) <= 0 then return end
+    if not getOscPresetEntry(oscPresetSlot) then
+        info.setText(string.format("Slot %02d is empty", oscPresetSlot))
+        return
+    end
+    if pendingOscDelete ~= oscPresetSlot then
+        pendingOscDelete = oscPresetSlot
+        info.setText(string.format("Press DELETE again to clear %02d", oscPresetSlot))
+        return
+    end
+    pendingOscDelete = nil
+    setOscPresetEntry(oscPresetSlot, nil)
+    if type(persist) == "function" then pcall(persist, z1PersistLib) end
+    setNameCharsBuffer(oscPresetName, defaultOscPresetName(oscPresetSlot), 0x7E)
+    syncOscNameChar()
+    repaintOscPresetList()
+    info.setText(string.format("Cleared slot %02d", oscPresetSlot))
+end
 
 function preset.onLoad()
     suppressModelCallback = true
     for ovId, items in pairs(ENUM_DEFS) do
         overlays.create(ovId, items)
     end
-    local c1 = preset.getControl(2)
-    if c1 then
-        c1:setPaintCallback(paintOsc1Model)
+    if type(recall) == "function" and (type(recallJson) ~= "function" or recallJson() ~= nil) then
+        local stored = {}
+        if pcall(recall, stored) and stored.version == 2 then
+            if type(stored.unit) == "table" then z1PersistLib.unit = stored.unit end
+            if type(stored.chain) == "table" then z1PersistLib.chain = stored.chain end
+            if type(stored.tuning) == "table" then z1PersistLib.tuning = stored.tuning end
+            if type(stored.oscUnit) == "table" then z1PersistLib.oscUnit = stored.oscUnit end
+            if type(stored.oscDual) == "table" then z1PersistLib.oscDual = stored.oscDual end
+        end
     end
-    local c2 = preset.getControl(8)
-    if c2 then
-        c2:setPaintCallback(paintOsc2Model)
+    for _, cid in ipairs({ 2, 8 }) do
+        local c = preset.getControl(cid)
+        if c then c:setPaintCallback(paintOscModel) end
+    end
+    local listCtrl = preset.getControl(37)
+    if listCtrl then
+        listCtrl:setPaintCallback(paintOscPresetList)
     end
 end
 
 function preset.onReady()
     suppressModelCallback = false
-    for _, cid in ipairs({ 3, 9 }) do
+    for cid, ovId in pairs(CTRL_OV) do
         local c = controls.get(cid)
-        if c then c:getValue("value"):setOverlayId(__OV(OV.OCTAVE)) end
+        if c then c:getValue("value"):setOverlayId(__OV(ovId)) end
     end
-    for _, cid in ipairs({ 16, 22, 25, 27, 31, 33 }) do
-        local c = controls.get(cid)
-        if c then c:getValue("value"):setOverlayId(__OV(OV.MODSRC1)) end
-    end
+    local c35 = controls.get(35)
+    if c35 then c35:getValue("value"):setOverlayId(__OV(OV.PRESET_TGT)) end
     local c301 = controls.get(301)
     if c301 then c301:getValue("value"):setOverlayId(__OV(OV.OSC1_TYPE)) end
     local c601 = controls.get(601)
     if c601 then c601:getValue("value"):setOverlayId(__OV(OV.OSC2_TYPE)) end
-    applyOsc1Model(0)
-    applyOsc2Model(0)
+    setNameCharsBuffer(oscPresetName, defaultOscPresetName(oscPresetSlot), 0x7E)
+    applyOscModel(1, 0)
+    applyOscModel(2, 0)
+    setOscPresetView(false)
     info.setText("Z1 OSC Common Ready")
-end
-
-local function z1ValToIdx(ovId, z1Val)
-    if not ovId then return z1Val end
-    local ov = overlays.get(ovId)
-    if ov and ov.getIndexByValue then
-        local idx = ov:getIndexByValue(z1Val)
-        if idx ~= nil then return idx end
-    end
-    if ov and ov.getValueByIndex then
-        for i = 0, 63 do
-            local v = ov:getValueByIndex(i)
-            if v == nil then break end
-            if v == z1Val then return i end
-        end
-    end
-    return z1Val
 end
 
 function preset.onZ1Param(exId, paramId, z1Val)
     if exId == 0 then
         if paramId == 174 then
-            applyOsc1Model(z1Val)
+            applyOscModel(1, z1Val)
             return
         elseif paramId == 188 then
-            applyOsc2Model(z1Val)
+            applyOscModel(2, z1Val)
             return
         end
         for cid, pid in pairs(CTRL_PARAM) do
             if pid == paramId then
+                commonSaved[cid] = z1Val
                 local c = controls.get(cid)
                 if c then c:getValue("value"):updateValue(z1Val) end
             end
@@ -3213,11 +3706,7 @@ function preset.onZ1Param(exId, paramId, z1Val)
             if def.id == paramId then
                 local disp = (def.kind == "list") and z1ValToIdx(def.ov, z1Val) or z1Val
                 oscSaved[(exId << 11) | paramId] = disp
-                if exId == 1 then
-                    applyOsc1Model(selectedOsc1Model)
-                else
-                    applyOsc2Model(selectedOsc2Model)
-                end
+                applyOscModel(exId, curModel)
                 return
             end
         end
@@ -3229,8 +3718,12 @@ function preset.onZ1Dump(params)
     if not p0 then return end
     for cid, pid in pairs(CTRL_PARAM) do
         if p0[pid] ~= nil then
+            commonSaved[cid] = p0[pid]
             local c = controls.get(cid)
-            if c then c:getValue("value"):updateValue(p0[pid]) end
+            if c then
+                local vo = c:getValue("value")
+                if vo and vo:getValue() ~= p0[pid] then vo:updateValue(p0[pid]) end
+            end
         end
     end
     local osc1Type = p0[174] or selectedOsc1Model
@@ -3255,76 +3748,46 @@ end
 
 do
     local env = __makeEnv("z1-osc-common",
-        {[1]=56,[2]=57,[3]=58,[4]=59,[5]=60,[6]=61,[7]=62,[8]=63,[9]=64,[10]=65,[11]=66,[12]=67,[13]=68,[14]=69,[15]=70,[16]=71,[17]=72,[19]=73,[20]=74,[21]=75,[22]=76,[23]=77,[25]=78,[26]=79,[27]=80,[28]=81,[31]=82,[32]=83,[33]=84,[34]=85,[50]=51,[51]=52,[52]=53,[60]=54,[70]=55,[301]=87,[336]=86,[403]=88,[404]=90,[405]=92,[406]=94,[407]=96,[408]=98,[409]=100,[410]=102,[411]=104,[412]=106,[413]=108,[414]=110,[415]=112,[416]=114,[417]=116,[418]=118,[419]=120,[420]=122,[421]=124,[422]=126,[423]=128,[424]=130,[425]=132,[426]=134,[427]=136,[428]=138,[429]=140,[430]=142,[431]=144,[432]=146,[433]=148,[434]=150,[435]=152,[436]=154,[503]=89,[504]=91,[505]=93,[506]=95,[507]=97,[508]=99,[509]=101,[510]=103,[511]=105,[512]=107,[513]=109,[514]=111,[515]=113,[516]=115,[517]=117,[518]=119,[519]=121,[520]=123,[521]=125,[522]=127,[523]=129,[524]=131,[525]=133,[526]=135,[527]=137,[528]=139,[529]=141,[530]=143,[531]=145,[532]=147,[533]=149,[534]=151,[535]=153,[536]=155,[601]=157,[636]=156,[703]=158,[704]=160,[705]=162,[706]=164,[707]=166,[708]=168,[709]=170,[710]=172,[711]=174,[712]=176,[713]=178,[714]=180,[715]=182,[716]=184,[717]=186,[718]=188,[719]=190,[720]=192,[721]=194,[722]=196,[723]=198,[724]=200,[725]=202,[726]=204,[727]=206,[728]=208,[729]=210,[730]=212,[731]=214,[732]=216,[733]=218,[734]=220,[735]=222,[736]=224,[803]=159,[804]=161,[805]=163,[806]=165,[807]=167,[808]=169,[809]=171,[810]=173,[811]=175,[812]=177,[813]=179,[814]=181,[815]=183,[816]=185,[817]=187,[818]=189,[819]=191,[820]=193,[821]=195,[822]=197,[823]=199,[824]=201,[825]=203,[826]=205,[827]=207,[828]=209,[829]=211,[830]=213,[831]=215,[832]=217,[833]=219,[834]=221,[835]=223,[836]=225},
-        {[1]=20,[2]=19,[3]=21,[4]=22,[10]=43,[11]=44,[12]=45,[13]=46,[14]=23,[15]=47,[16]=48,[17]=49,[18]=50,[19]=51,[20]=52,[21]=53,[22]=31,[23]=54,[24]=5,[25]=55,[26]=56,[27]=57},
+        {[1]=74,[2]=75,[3]=76,[4]=77,[5]=78,[6]=79,[7]=80,[8]=81,[9]=82,[10]=83,[11]=84,[12]=85,[13]=86,[14]=87,[15]=88,[16]=89,[17]=90,[19]=91,[20]=92,[21]=93,[22]=94,[23]=95,[24]=283,[25]=96,[26]=97,[27]=98,[28]=99,[31]=100,[32]=101,[33]=102,[34]=103,[35]=284,[36]=285,[37]=286,[38]=287,[39]=288,[40]=289,[41]=290,[42]=291,[43]=292,[50]=69,[51]=70,[52]=71,[60]=72,[70]=73,[301]=105,[336]=104,[403]=106,[404]=108,[405]=110,[406]=112,[407]=114,[408]=116,[409]=118,[410]=120,[411]=122,[412]=124,[413]=126,[414]=128,[415]=130,[416]=132,[417]=134,[418]=136,[419]=138,[420]=140,[421]=142,[422]=144,[423]=146,[424]=148,[425]=150,[426]=152,[427]=154,[428]=156,[429]=158,[430]=160,[431]=162,[432]=164,[433]=166,[434]=168,[435]=170,[436]=172,[454]=244,[456]=245,[457]=246,[458]=247,[459]=248,[461]=249,[462]=250,[463]=251,[464]=252,[465]=253,[466]=254,[467]=255,[468]=256,[469]=257,[470]=258,[471]=259,[472]=260,[473]=261,[474]=262,[475]=263,[476]=264,[477]=265,[480]=266,[503]=107,[504]=109,[505]=111,[506]=113,[507]=115,[508]=117,[509]=119,[510]=121,[511]=123,[512]=125,[513]=127,[514]=129,[515]=131,[516]=133,[517]=135,[518]=137,[519]=139,[520]=141,[521]=143,[522]=145,[523]=147,[524]=149,[525]=151,[526]=153,[527]=155,[528]=157,[529]=159,[530]=161,[531]=163,[532]=165,[533]=167,[534]=169,[535]=171,[536]=173,[601]=175,[636]=174,[703]=176,[704]=178,[705]=180,[706]=182,[707]=184,[708]=186,[709]=188,[710]=190,[711]=192,[712]=194,[713]=196,[714]=198,[715]=200,[716]=202,[717]=204,[718]=206,[719]=208,[720]=210,[721]=212,[722]=214,[723]=216,[724]=218,[725]=220,[726]=222,[727]=224,[728]=226,[729]=228,[730]=230,[731]=232,[732]=234,[733]=236,[734]=238,[735]=240,[736]=242,[756]=267,[757]=268,[758]=269,[759]=270,[761]=271,[762]=272,[763]=273,[764]=274,[765]=275,[766]=276,[768]=277,[769]=278,[771]=279,[772]=280,[775]=281,[777]=282,[803]=177,[804]=179,[805]=181,[806]=183,[807]=185,[808]=187,[809]=189,[810]=191,[811]=193,[812]=195,[813]=197,[814]=199,[815]=201,[816]=203,[817]=205,[818]=207,[819]=209,[820]=211,[821]=213,[822]=215,[823]=217,[824]=219,[825]=221,[826]=223,[827]=225,[828]=227,[829]=229,[830]=231,[831]=233,[832]=235,[833]=237,[834]=239,[835]=241,[836]=243},
+        {[1]=21,[2]=20,[3]=22,[4]=35,[5]=39,[10]=23,[11]=24,[12]=25,[13]=26,[14]=40,[15]=27,[16]=28,[17]=29,[18]=30,[19]=31,[20]=32,[21]=33,[22]=48,[23]=34,[24]=7,[25]=36,[26]=37,[27]=38},
         {[1]=3,[2]=4,[3]=5})
+    env.fmtAsciiChar = function(...) return _G["bs_fmtAsciiChar"](...) end
     local ok, err = pcall(__module_z1_osc_common, env)
     if not ok then print("Z1 merged: error loading z1-osc-common: " .. tostring(err)) end
-    if rawget(_G, "MODSRC1") == nil then _G.MODSRC1 = env.MODSRC1 end
-    if rawget(_G, "NOTE_NAMES") == nil then _G.NOTE_NAMES = env.NOTE_NAMES end
-    if rawget(_G, "getOsc1ModelName") == nil then _G.getOsc1ModelName = env.getOsc1ModelName end
-    if rawget(_G, "getOsc2ModelName") == nil then _G.getOsc2ModelName = env.getOsc2ModelName end
-    if rawget(_G, "paintOsc1Model") == nil then _G.paintOsc1Model = env.paintOsc1Model end
-    if rawget(_G, "paintOsc2Model") == nil then _G.paintOsc2Model = env.paintOsc2Model end
-    if rawget(_G, "applyOsc1Model") == nil then _G.applyOsc1Model = env.applyOsc1Model end
-    if rawget(_G, "applyOsc2Model") == nil then _G.applyOsc2Model = env.applyOsc2Model end
+    if rawget(_G, "getOscModelName") == nil then _G.getOscModelName = env.getOscModelName end
+    if rawget(_G, "paintOscModel") == nil then _G.paintOscModel = env.paintOscModel end
+    if rawget(_G, "applyOscModel") == nil then _G.applyOscModel = env.applyOscModel end
     if rawget(_G, "setOscModelsFromDump") == nil then _G.setOscModelsFromDump = env.setOscModelsFromDump end
-    __export(env, "oc_onJumpOsc1", "onJumpOsc1")
-    __export(env, "oc_onOsc1Model", "onOsc1Model")
-    __export(env, "oc_onOctave", "onOctave")
+    if rawget(_G, "showOscPresetManager") == nil then _G.showOscPresetManager = env.showOscPresetManager end
+    if rawget(_G, "setOscPresetView") == nil then _G.setOscPresetView = env.setOscPresetView end
+    if rawget(_G, "paintOscPresetList") == nil then _G.paintOscPresetList = env.paintOscPresetList end
+    __export(env, "oc_onJumpPage", "onJumpPage")
+    __export(env, "oc_onOscType", "onOscType")
     __export(env, "oc_onParam", "onParam")
     __export(env, "oc_fmtHz10", "fmtHz10")
-    __export(env, "oc_onJumpOsc2", "onJumpOsc2")
-    __export(env, "oc_onOsc2Model", "onOsc2Model")
     __export(env, "oc_fmtNote", "fmtNote")
     __export(env, "oc_fmtSlope", "fmtSlope")
-    __export(env, "oc_onModSrc1", "onModSrc1")
-    __export(env, "oc_onJumpOscCommon", "onJumpOscCommon")
-    __export(env, "oc_onOsc1Type", "onOsc1Type")
-    __export(env, "oc_onOsc1Slot", "onOsc1Slot")
-    __export(env, "oc_fmtOsc1Slot", "fmtOsc1Slot")
-    __export(env, "oc_onOsc2Type", "onOsc2Type")
-    __export(env, "oc_onOsc2Slot", "onOsc2Slot")
-    __export(env, "oc_fmtOsc2Slot", "fmtOsc2Slot")
+    __export(env, "oc_onOscSlot", "onOscSlot")
+    __export(env, "oc_fmtOscSlot", "fmtOscSlot")
+    __export(env, "oc_onOscPresetView", "onOscPresetView")
+    __export(env, "oc_onOscPresetTarget", "onOscPresetTarget")
+    __export(env, "oc_onOscPresetSlot", "onOscPresetSlot")
+    __export(env, "oc_fmtOscPresetSlot", "fmtOscPresetSlot")
+    __export(env, "oc_onOscPresetLoad", "onOscPresetLoad")
+    __export(env, "oc_onOscPresetSave", "onOscPresetSave")
+    __export(env, "oc_onOscNamePos", "onOscNamePos")
+    __export(env, "oc_onOscNameChar", "onOscNameChar")
+    __export(env, "oc_onOscPresetRename", "onOscPresetRename")
+    __export(env, "oc_onOscPresetDelete", "onOscPresetDelete")
 end
 
 -- ==========================================================================
 -- module z1-sub-noise  (prefix sn_)
 -- ==========================================================================
 local function __module_z1_sub_noise(_ENV)
--- Korg Z1 - Sub Oscillator, Noise Generator & OSC Common Page for Electra One mk2
--- Covers all 33 Program Parameters across:
---   [SUB OSC]         (IDs 202..215, 14 params, ExID = 0)
---   [Noise Generator] (IDs 216..223, 8 params,  ExID = 0)
---   [OSC Common]      (IDs 163..173, 11 params, ExID = 0)
---
--- Layout (35 slots across 3 Control Sets):
---   Control Set 1 (Rows 1-2, Slots 1..12):
---     [1]  Sub Wave (215),   [2]  Sub Octave (202), [3]  Sub Semi (203),   [4]  Sub Fine (204),
---     [5]  Sub Offset (205), [6]  Sub CtrKey (206), [7]  Sub LoSlp (207),  [8]  Sub HiSlp (208),
---     [9]  Sub Mod1Src (209),[10] Sub Mod1Int (210),[11] Sub M1Ctrl (211), [12] Sub M1CInt (212)
---   Control Set 2 (Rows 3-4, Slots 13..22):
---     [13] Sub Mod2Src (213),[14] Sub Mod2Int (214),[15] Noise Flt (216),  [16] Noise Trim (217),
---     [17] Noise Cut (218),  [18] Noise Reso (223), [19] Ns CutSrc1 (219), [20] Ns CutInt1 (220),
---     [21] Ns CutSrc2 (221), [22] Ns CutInt2 (222)
---   Control Set 3 (Rows 5-6, Slots 25..35):
---     [25] PBend Int+ (163), [26] PBend Int- (164), [27] PBend Stp+ (165), [28] PBend Stp- (166),
---     [29] CmnMod Src (167), [30] CmnMod Int (168), [31] Porta SW (169),   [32] Porta Mode (170),
---     [33] Porta Time (171), [34] Porta Src (172),  [35] Porta Int (173)
+
 
 local DEVICE_ID = 1
-
-local function getGlobalChannel()
-    local dev = preset.getDevice(DEVICE_ID)
-    if dev then
-        return (dev:getChannel() - 1) & 0x0F
-    end
-    return 0
-end
-
--- ============================================================================
--- 1. Overlays & Enumerations
--- ============================================================================
 
 local OV = {
     MODSRC1    = 1,
@@ -3335,56 +3798,10 @@ local OV = {
     PORTA_MODE = 6,
 }
 
-local ENUM_DEFS = {
-    [OV.MODSRC1] = MODSRC1,
-    [OV.SUB_WAVE] = {
-        { value = 0, label = "SAW" },
-        { value = 1, label = "SQU" },
-        { value = 2, label = "TRI" },
-        { value = 3, label = "SIN" },
-    },
-    [OV.OCTAVE] = {
-        { value = 0, label = "32'" },
-        { value = 1, label = "16'" },
-        { value = 2, label = "8'" },
-        { value = 3, label = "4'" },
-    },
-    [OV.NOISE_FLT] = {
-        { value = 0, label = "THRU" },
-        { value = 1, label = "LPF" },
-        { value = 2, label = "HPF" },
-        { value = 3, label = "BPF" },
-    },
-    [OV.PB_STEP] = {
-        { value = 0,  label = "CONT" },
-        { value = 1,  label = "1/8" },
-        { value = 2,  label = "1/4" },
-        { value = 3,  label = "1/2" },
-        { value = 4,  label = "1 Semi" },
-        { value = 5,  label = "2 Semi" },
-        { value = 6,  label = "3 Semi" },
-        { value = 7,  label = "4 Semi" },
-        { value = 8,  label = "5 Semi" },
-        { value = 9,  label = "6 Semi" },
-        { value = 10, label = "7 Semi" },
-        { value = 11, label = "8 Semi" },
-        { value = 12, label = "9 Semi" },
-        { value = 13, label = "10 Semi" },
-        { value = 14, label = "11 Semi" },
-        { value = 15, label = "12 Semi" },
-    },
-    [OV.PORTA_MODE] = {
-        { value = 0, label = "NORMAL" },
-        { value = 1, label = "FINGERED" },
-    },
-}
-
--- ============================================================================
--- 2. Parameter Mapping (PROG_PRM.TXT IDs 163..173 & 202..223, ExID = 0)
--- ============================================================================
+local ENUM_DEFS = {}
 
 SUB_NOISE_MAP = {
-    -- SUB OSC (IDs 202..215)
+
     [1]  = { id = 215, kind = "list", ov = OV.SUB_WAVE },
     [2]  = { id = 202, kind = "list", ov = OV.OCTAVE },
     [3]  = { id = 203, kind = "num" },
@@ -3399,7 +3816,7 @@ SUB_NOISE_MAP = {
     [12] = { id = 212, kind = "num" },
     [13] = { id = 213, kind = "list", ov = OV.MODSRC1 },
     [14] = { id = 214, kind = "num" },
-    -- Noise Generator (IDs 216..223)
+
     [15] = { id = 216, kind = "list", ov = OV.NOISE_FLT },
     [16] = { id = 217, kind = "num" },
     [17] = { id = 218, kind = "num" },
@@ -3408,7 +3825,7 @@ SUB_NOISE_MAP = {
     [20] = { id = 220, kind = "num" },
     [21] = { id = 221, kind = "list", ov = OV.MODSRC1 },
     [22] = { id = 222, kind = "num" },
-    -- OSC Common: Pitch Bend, Common Pitch Mod, Portamento (IDs 163..173)
+
     [25] = { id = 163, kind = "num" },
     [26] = { id = 164, kind = "num" },
     [27] = { id = 165, kind = "list", ov = OV.PB_STEP },
@@ -3421,24 +3838,6 @@ SUB_NOISE_MAP = {
     [34] = { id = 172, kind = "list", ov = OV.MODSRC1 },
     [35] = { id = 173, kind = "num" },
 }
-
--- ============================================================================
--- 3. SysEx Builder & Sender
--- ============================================================================
-
-local function sendParamChange(exId, paramId, signedVal)
-    local dev = preset.getDevice(DEVICE_ID)
-    local body = buildParamChangeBody(exId, paramId, signedVal)
-    if dev then
-        dev:sendSysex(body)
-    else
-        midi.sendSysex(PORT_1, body)
-    end
-end
-
--- ============================================================================
--- 4. Control Callbacks & Lifecycle Hooks
--- ============================================================================
 
 function onSubNoiseParam(valueObject, value)
     local ctrlId = __LID(valueObject:getControl():getId())
@@ -3470,30 +3869,16 @@ function preset.onReady()
     info.setText("Z1 Sub/Noise/Common Ready")
 end
 
-local function z1ValToIdx(ovId, z1Val)
-    if not ovId then return z1Val end
-    local ov = overlays.get(ovId)
-    if ov and ov.getIndexByValue then
-        local idx = ov:getIndexByValue(z1Val)
-        if idx ~= nil then return idx end
-    end
-    if ov and ov.getValueByIndex then
-        for i = 0, 63 do
-            local v = ov:getValueByIndex(i)
-            if v == nil then break end
-            if v == z1Val then return i end
-        end
-    end
-    return z1Val
-end
-
 function preset.onZ1Param(exId, paramId, z1Val)
     if exId ~= 0 then return end
     for cid, spec in pairs(SUB_NOISE_MAP) do
         if spec.id == paramId then
             local disp = (spec.kind == "list") and z1ValToIdx(spec.ov, z1Val) or z1Val
             local c = controls.get(cid)
-            if c then c:getValue("value"):updateValue(disp) end
+            if c then
+                local vo = c:getValue("value")
+                if vo and vo:getValue() ~= disp then vo:updateValue(disp) end
+            end
         end
     end
 end
@@ -3506,7 +3891,10 @@ function preset.onZ1Dump(params)
         if z1Val ~= nil then
             local disp = (spec.kind == "list") and z1ValToIdx(spec.ov, z1Val) or z1Val
             local c = controls.get(cid)
-            if c then c:getValue("value"):updateValue(disp) end
+            if c then
+                local vo = c:getValue("value")
+                if vo and vo:getValue() ~= disp then vo:updateValue(disp) end
+            end
         end
     end
 end
@@ -3514,8 +3902,8 @@ end
 
 do
     local env = __makeEnv("z1-sub-noise",
-        {[1]=229,[2]=230,[3]=231,[4]=232,[5]=233,[6]=234,[7]=235,[8]=236,[9]=237,[10]=238,[11]=239,[12]=240,[13]=241,[14]=242,[15]=243,[16]=244,[17]=245,[18]=246,[19]=247,[20]=248,[21]=249,[22]=250,[25]=251,[26]=252,[27]=253,[28]=254,[29]=255,[30]=256,[31]=257,[32]=258,[33]=259,[34]=260,[35]=261,[50]=226,[51]=227,[52]=228},
-        {[1]=20,[2]=23,[3]=19,[4]=24,[5]=25,[6]=26},
+        {[1]=296,[2]=297,[3]=298,[4]=299,[5]=300,[6]=301,[7]=302,[8]=303,[9]=304,[10]=305,[11]=306,[12]=307,[13]=308,[14]=309,[15]=310,[16]=311,[17]=312,[18]=313,[19]=314,[20]=315,[21]=316,[22]=317,[25]=318,[26]=319,[27]=320,[28]=321,[29]=322,[30]=323,[31]=324,[32]=325,[33]=326,[34]=327,[35]=328,[50]=293,[51]=294,[52]=295},
+        {[1]=21,[2]=40,[3]=20,[4]=41,[5]=42,[6]=43},
         {[1]=6})
     env.fmtHz10 = function(...) return _G["oc_fmtHz10"](...) end
     env.fmtNote = function(...) return _G["oc_fmtNote"](...) end
@@ -3529,57 +3917,13 @@ end
 -- module z1-mix  (prefix mx_)
 -- ==========================================================================
 local function __module_z1_mix(_ENV)
--- Korg Z1 - Mixer & Mix Modulation Page for Electra One mk2
--- Covers all 34 Z1 [Mixer] Program Parameters (PROG_PRM.TXT IDs 224..257, ExID = 0)
--- plus 2 custom Mixer Bus bar-graph visualizers (Out 1 -> Filter 1, Out 2 -> Filter 2).
---
--- Layout (36 slots across 3 Control Sets, 5 channel strips in Columns 1..5 + Switches/Meters in Column 6):
---   Columns 1..5: [Col 1] OSC1, [Col 2] OSC2, [Col 3] SUB OSC, [Col 4] NOISE, [Col 5] FEEDBACK
---   Control Set 1 (Rows 1-2, Slots 1..12):
---     Row 1 (Slots 1..6):   [1..5]  Out 1 Level (0..99) for OSC1/OSC2/SUB/NOISE/FBK, [6]  OSC1 Out SW (254)
---     Row 2 (Slots 7..12):  [7..11] Out 2 Level (0..99) for OSC1/OSC2/SUB/NOISE/FBK, [12] OSC2 Out SW (255)
---   Control Set 2 (Rows 3-4, Slots 13..24):
---     Row 3 (Slots 13..18): [13..17] Out 1 Level Mod Source (0..48, List 1),         [18] SUB Out SW (256)
---     Row 4 (Slots 19..24): [19..23] Out 1 Level Mod Int (-99..+99),                 [24] Noise Out SW (257)
---   Control Set 3 (Rows 5-6, Slots 25..36):
---     Row 5 (Slots 25..30): [25..29] Out 2 Level Mod Source (0..48, List 1),         [30] Out 1 Bus (custom graph)
---     Row 6 (Slots 31..36): [31..35] Out 2 Level Mod Int (-99..+99),                 [36] Out 2 Bus (custom graph)
+
 
 local DEVICE_ID = 1
-
-local function getGlobalChannel()
-    local dev = preset.getDevice(DEVICE_ID)
-    if dev then
-        return (dev:getChannel() - 1) & 0x0F
-    end
-    return 0
-end
-
--- ============================================================================
--- 1. Overlays & Enumerations
--- ============================================================================
 
 local OV = {
     MODSRC1 = 1,
 }
-
--- ============================================================================
--- 2. Z1 Mixer Parameter Mapping (PROG_PRM.TXT IDs 224..257, ExID = 0)
--- ============================================================================
--- 5 Mixer Channels (stride = 6 parameters per channel):
---   Ch 1 (OSC1):     base 224 (224..229), Output SW = 254
---   Ch 2 (OSC2):     base 230 (230..235), Output SW = 255
---   Ch 3 (SUB OSC):  base 236 (236..241), Output SW = 256
---   Ch 4 (NOISE):    base 242 (242..247), Output SW = 257
---   Ch 5 (Feedback): base 248 (248..253), always active (no Output SW)
---
--- Per-channel offsets (0..5):
---   +0: Out1 Level          (0..99)
---   +1: Out1 Level Mod Src  (0..48, Mod.Source List 1)
---   +2: Out1 Level Mod Int  (-99..+99)
---   +3: Out2 Level          (0..99)
---   +4: Out2 Level Mod Src  (0..48, Mod.Source List 1)
---   +5: Out2 Level Mod Int  (-99..+99)
 
 MIX_CHANNELS = {
     [1] = { name = "OSC1",  short = "O1", base = 224, swId = 254, defOut1 = 99, defOut2 = 0, defSw = 1, color = 0xF49500 },
@@ -3589,7 +3933,6 @@ MIX_CHANNELS = {
     [5] = { name = "FBK",   short = "FB", base = 248, swId = nil, defOut1 = 0,  defOut2 = 0, defSw = 1, color = 0xC44795 },
 }
 
--- Live mixer state (used by custom Bus 1 / Bus 2 bar-graph widgets and verified by tests)
 mixState = {}
 for ch = 1, 5 do
     local cfg = MIX_CHANNELS[ch]
@@ -3604,38 +3947,30 @@ for ch = 1, 5 do
     }
 end
 
--- Map control IDs (1..35, excluding custom widgets 30 & 36) to Z1 parameter specs
 MIX_CTRL_MAP = {}
 for ch = 1, 5 do
     local base = MIX_CHANNELS[ch].base
-    -- Row 1 (Controls 1..5): Out 1 Level (+0)
+
     MIX_CTRL_MAP[ch]      = { id = base + 0, ch = ch, field = "out1Lvl", kind = "num",  bus = 1 }
-    -- Row 2 (Controls 7..11): Out 2 Level (+3)
+
     MIX_CTRL_MAP[6 + ch]  = { id = base + 3, ch = ch, field = "out2Lvl", kind = "num",  bus = 2 }
-    -- Row 3 (Controls 13..17): Out 1 Level Mod Source (+1)
+
     MIX_CTRL_MAP[12 + ch] = { id = base + 1, ch = ch, field = "out1Src", kind = "list", ov = OV.MODSRC1, bus = 1 }
-    -- Row 4 (Controls 19..23): Out 1 Level Mod Int (+2)
+
     MIX_CTRL_MAP[18 + ch] = { id = base + 2, ch = ch, field = "out1Int", kind = "num",  bus = 1 }
-    -- Row 5 (Controls 25..29): Out 2 Level Mod Source (+4)
+
     MIX_CTRL_MAP[24 + ch] = { id = base + 4, ch = ch, field = "out2Src", kind = "list", ov = OV.MODSRC1, bus = 2 }
-    -- Row 6 (Controls 31..35): Out 2 Level Mod Int (+5)
+
     MIX_CTRL_MAP[30 + ch] = { id = base + 5, ch = ch, field = "out2Int", kind = "num",  bus = 2 }
 end
 
--- Column 6 (Controls 6, 12, 18, 24): Mixer Output Switches (IDs 254..257)
 MIX_CTRL_MAP[6]  = { id = 254, ch = 1, field = "sw", kind = "num", bus = 0 }
 MIX_CTRL_MAP[12] = { id = 255, ch = 2, field = "sw", kind = "num", bus = 0 }
 MIX_CTRL_MAP[18] = { id = 256, ch = 3, field = "sw", kind = "num", bus = 0 }
 MIX_CTRL_MAP[24] = { id = 257, ch = 4, field = "sw", kind = "num", bus = 0 }
 
--- Custom Mixer Bus bar-graph control IDs (Slot 30 = Out 1 Bus, Slot 36 = Out 2 Bus)
 local BUS_CTRL_ID = { [1] = 30, [2] = 36 }
 
--- ============================================================================
--- 3. Custom Mixer Bus Visualizer Widget (Out 1 -> FLT 1, Out 2 -> FLT 2)
--- ============================================================================
-
--- Compute normalized effective bar height in [0.0, 1.0] for channel `ch` on bus `busIdx` (1 or 2)
 function evalMixBusLevel(ch, busIdx)
     local st = mixState[ch]
     if not st or st.sw == 0 then
@@ -3668,11 +4003,9 @@ local function makeBusPainter(busIdx)
             local x0  = 6 + (ch - 1) * colW
             local bw  = colW - 4
 
-            -- Track background
             graphics.setColor(0x2A3544)
             graphics.fillRect(x0, top, bw, maxBarH)
 
-            -- Active level bar (dimmed if channel Output SW is OFF)
             local rawLvl = (busIdx == 1) and st.out1Lvl or st.out2Lvl
             local barH = math.floor(((rawLvl or 0) / 99.0) * maxBarH + 0.5)
             if barH > 0 then
@@ -3680,7 +4013,6 @@ local function makeBusPainter(busIdx)
                 graphics.fillRect(x0, bot - barH, bw, barH)
             end
 
-            --Modulation indicator dot at top of bar if Mod Src != Off and Mod Int != 0
             local modSrc = (busIdx == 1) and st.out1Src or st.out2Src
             local modInt = (busIdx == 1) and st.out1Int or st.out2Int
             if modSrc ~= 0 and modInt ~= 0 then
@@ -3706,24 +4038,6 @@ local function repaintMixBuses(busIdx)
     end
 end
 
--- ============================================================================
--- 4. SysEx Builder & Sender
--- ============================================================================
-
-local function sendParamChange(exId, paramId, signedVal)
-    local dev = preset.getDevice(DEVICE_ID)
-    local body = buildParamChangeBody(exId, paramId, signedVal)
-    if dev then
-        dev:sendSysex(body)
-    else
-        midi.sendSysex(PORT_1, body)
-    end
-end
-
--- ============================================================================
--- 5. Control Callbacks
--- ============================================================================
-
 function onMixParam(valueObject, value)
     local ctrlId = __LID(valueObject:getControl():getId())
     local spec = MIX_CTRL_MAP[ctrlId]
@@ -3743,10 +4057,6 @@ function onMixParam(valueObject, value)
 
     sendParamChange(0, spec.id, z1Val)
 end
-
--- ============================================================================
--- 6. Lifecycle Hooks
--- ============================================================================
 
 function preset.onLoad()
     overlays.create(OV.MODSRC1, MODSRC1)
@@ -3768,23 +4078,6 @@ function preset.onReady()
     info.setText("Z1 Mixer Ready")
 end
 
-local function z1ValToIdx(ovId, z1Val)
-    if not ovId then return z1Val end
-    local ov = overlays.get(ovId)
-    if ov and ov.getIndexByValue then
-        local idx = ov:getIndexByValue(z1Val)
-        if idx ~= nil then return idx end
-    end
-    if ov and ov.getValueByIndex then
-        for i = 0, 63 do
-            local v = ov:getValueByIndex(i)
-            if v == nil then break end
-            if v == z1Val then return i end
-        end
-    end
-    return z1Val
-end
-
 function preset.onZ1Param(exId, paramId, z1Val)
     if exId ~= 0 then return end
     for cid, spec in pairs(MIX_CTRL_MAP) do
@@ -3792,7 +4085,10 @@ function preset.onZ1Param(exId, paramId, z1Val)
             mixState[spec.ch][spec.field] = z1Val
             local disp = (spec.kind == "list") and z1ValToIdx(spec.ov, z1Val) or z1Val
             local c = controls.get(cid)
-            if c then c:getValue("value"):updateValue(disp) end
+            if c then
+                local vo = c:getValue("value")
+                if vo and vo:getValue() ~= disp then vo:updateValue(disp) end
+            end
             repaintMixBuses(spec.bus)
         end
     end
@@ -3807,7 +4103,10 @@ function preset.onZ1Dump(params)
             mixState[spec.ch][spec.field] = z1Val
             local disp = (spec.kind == "list") and z1ValToIdx(spec.ov, z1Val) or z1Val
             local c = controls.get(cid)
-            if c then c:getValue("value"):updateValue(disp) end
+            if c then
+                local vo = c:getValue("value")
+                if vo and vo:getValue() ~= disp then vo:updateValue(disp) end
+            end
         end
     end
     repaintMixBuses(0)
@@ -3816,8 +4115,8 @@ end
 
 do
     local env = __makeEnv("z1-mix",
-        {[1]=265,[2]=266,[3]=267,[4]=268,[5]=269,[6]=270,[7]=271,[8]=272,[9]=273,[10]=274,[11]=275,[12]=276,[13]=277,[14]=278,[15]=279,[16]=280,[17]=281,[18]=282,[19]=283,[20]=284,[21]=285,[22]=286,[23]=287,[24]=288,[25]=289,[26]=290,[27]=291,[28]=292,[29]=293,[30]=294,[31]=295,[32]=296,[33]=297,[34]=298,[35]=299,[36]=300,[50]=262,[51]=263,[52]=264},
-        {[1]=20},
+        {[1]=332,[2]=333,[3]=334,[4]=335,[5]=336,[6]=337,[7]=338,[8]=339,[9]=340,[10]=341,[11]=342,[12]=343,[13]=344,[14]=345,[15]=346,[16]=347,[17]=348,[18]=349,[19]=350,[20]=351,[21]=352,[22]=353,[23]=354,[24]=355,[25]=356,[26]=357,[27]=358,[28]=359,[29]=360,[30]=361,[31]=362,[32]=363,[33]=364,[34]=365,[35]=366,[36]=367,[50]=329,[51]=330,[52]=331},
+        {[1]=21},
         {[1]=7})
     local ok, err = pcall(__module_z1_mix, env)
     if not ok then print("Z1 merged: error loading z1-mix: " .. tostring(err)) end
@@ -3829,24 +4128,9 @@ end
 -- module z1-filter  (prefix fl_)
 -- ==========================================================================
 local function __module_z1_filter(_ENV)
--- Korg Z1 - Filter 1 & 2 + Dynamic Assigned Cutoff EG for Electra One mk2
--- Control Set 1 (Rows 1-2, Slots 1..12): Routing, Link, Assigned Cutoff EG (dx7envelope + Start Level), Filter 1 & 2 Type/Trim/Cutoff/Reso
--- Control Set 2 (Rows 3-4, Slots 13..24): Filter Select (Filter 1 / Filter 2) + Cutoff/Resonance Modulations & Key Track
--- Control Set 3 (Rows 5-6, Slots 26..36): Dual-Bandpass (2BPF) Filter-B parameters - ONLY visible when selected Filter Type == 2BPF!
+
 
 local DEVICE_ID = 1
-
-local function getGlobalChannel()
-    local dev = preset.getDevice(DEVICE_ID)
-    if dev then
-        return (dev:getChannel() - 1) & 0x0F
-    end
-    return 0
-end
-
--- ============================================================================
--- 1. Overlays & Enumerations
--- ============================================================================
 
 local OV = {
     ROUTING    = 1,
@@ -3857,55 +4141,43 @@ local OV = {
     FLT_SELECT = 6,
 }
 
-local ENUM_DEFS = {
-    [OV.ROUTING] = {
-        { value = 0, label = "SERIAL 1" },
-        { value = 1, label = "SERIAL 2" },
-        { value = 2, label = "PARALLEL" },
-    },
-    [OV.MODSRC1] = MODSRC1,
-    [OV.EG_TARGET] = {
-        { value = 1, label = "FLT 1" },
-        { value = 2, label = "FLT 2" },
-        { value = 3, label = "FLT 1&2" },
-    },
-    [OV.FLT_TYPE] = {
-        { value = 1, label = "LPF" },
-        { value = 2, label = "HPF" },
-        { value = 3, label = "BPF" },
-        { value = 4, label = "BRF" },
-        { value = 5, label = "2BPF" },
-    },
-    [OV.EG_1_5] = {
-        { value = 1, label = "EG1" },
-        { value = 2, label = "EG2" },
-        { value = 3, label = "EG3" },
-        { value = 4, label = "EG4" },
-        { value = 5, label = "Amp EG" },
-    },
-    [OV.FLT_SELECT] = {
-        { value = 0, label = "Filter 1" },
-        { value = 1, label = "Filter 2" },
-    },
-}
+local ENUM_DEFS = {}
 
--- ============================================================================
--- 2. Parameter Mapping (PROG_PRM.TXT, ExID = 0)
--- ============================================================================
-
--- All 5 Envelope Generators that can be assigned to Filter Cutoff Mod EG (Z1 values 1..5):
--- 1=EG1 (31..39), 2=EG2 (50..58), 3=EG3 (69..77), 4=EG4 (88..96), 5=Amp EG (334..340)
 EGS = {
-    [1] = { name = "EG1",    isAmp = false, curve = { start = 31,  r1 = 32,  l1 = 33,  r2 = 34,  l2 = 35,  r3 = 36,  l3 = 37,  r4 = 38,  l4 = 39  } },
-    [2] = { name = "EG2",    isAmp = false, curve = { start = 50,  r1 = 51,  l1 = 52,  r2 = 53,  l2 = 54,  r3 = 55,  l3 = 56,  r4 = 57,  l4 = 58  } },
-    [3] = { name = "EG3",    isAmp = false, curve = { start = 69,  r1 = 70,  l1 = 71,  r2 = 72,  l2 = 73,  r3 = 74,  l3 = 75,  r4 = 76,  l4 = 77  } },
-    [4] = { name = "EG4",    isAmp = false, curve = { start = 88,  r1 = 89,  l1 = 90,  r2 = 91,  l2 = 92,  r3 = 93,  l3 = 94,  r4 = 95,  l4 = 96  } },
-    [5] = { name = "Amp EG", isAmp = true,  curve = { start = nil, r1 = 334, l1 = 335, r2 = 336, l2 = 337, r3 = 338, l3 = 339, r4 = 340, l4 = nil } },
+    [1] = {
+        name = "EG1",
+        isAmp = false,
+        curve = { start = 31, r1 = 32, l1 = 33, r2 = 34, l2 = 35, r3 = 36, l3 = 37, r4 = 38, l4 = 39 },
+        mod   = { 40, 41, 42, 43, 44, 45, 46, 47, 48, 49 },
+    },
+    [2] = {
+        name = "EG2",
+        isAmp = false,
+        curve = { start = 50, r1 = 51, l1 = 52, r2 = 53, l2 = 54, r3 = 55, l3 = 56, r4 = 57, l4 = 58 },
+        mod   = { 59, 60, 61, 62, 63, 64, 65, 66, 67, 68 },
+    },
+    [3] = {
+        name = "EG3",
+        isAmp = false,
+        curve = { start = 69, r1 = 70, l1 = 71, r2 = 72, l2 = 73, r3 = 74, l3 = 75, r4 = 76, l4 = 77 },
+        mod   = { 78, 79, 80, 81, 82, 83, 84, 85, 86, 87 },
+    },
+    [4] = {
+        name = "EG4",
+        isAmp = false,
+        curve = { start = 88, r1 = 89, l1 = 90, r2 = 91, l2 = 92, r3 = 93, l3 = 94, r4 = 95, l4 = 96 },
+        mod   = { 97, 98, 99, 100, 101, 102, 103, 104, 105, 106 },
+    },
+    [5] = {
+        name = "Amp EG",
+        isAmp = true,
+        curve = { start = nil, r1 = 334, l1 = 335, r2 = 336, l2 = 337, r3 = 338, l3 = 339, r4 = 340, l4 = nil },
+        mod   = { 342, 343, 344, 345, 346, 347, 348, 349, 350, 351 },
+    },
 }
 
 local HANDLES = { "l1", "r1", "l2", "r2", "l3", "r3", "l4", "r4" }
 
--- Saved curve values per EG (1..5) in memory (shared with z1-eg so edits on either page stay in sync)
 egCurveSaved = _G.egCurveSaved or {}
 _G.egCurveSaved = egCurveSaved
 for egId = 1, 5 do
@@ -3921,21 +4193,18 @@ for egId = 1, 5 do
     end
 end
 
--- Track Filter 1 & Filter 2 Type (0..4 index -> 1..5 Z1 value; index 4 = 2BPF)
 fltTypeIdx = { [0] = 0, [1] = 0 }
 
--- Static top-section parameters (Control IDs -> Z1 Parameter IDs)
 local STATIC_PARAMS = {
-    [1]  = { id = 258, kind = "list", ov = OV.ROUTING },   -- Filter Routing (0..2)
-    [2]  = { id = 259, kind = "num" },                     -- Filter2 Link SW (0/1)
-    [3]  = { id = 260, kind = "list", ov = OV.EG_TARGET }, -- Filter EG Knob's Target (1..3)
-    [6]  = { id = 261, kind = "list", ov = OV.FLT_TYPE, flt = 0 }, -- Filter 1 Type (1..5)
-    [7]  = { id = 262, kind = "num" },                     -- Filter 1 Input Trim (0..99)
-    [10] = { id = 288, kind = "list", ov = OV.FLT_TYPE, flt = 1 }, -- Filter 2 Type (1..5)
-    [11] = { id = 289, kind = "num" },                     -- Filter 2 Input Trim (0..99)
+    [1]  = { id = 258, kind = "list", ov = OV.ROUTING },
+    [2]  = { id = 259, kind = "num" },
+    [3]  = { id = 260, kind = "list", ov = OV.EG_TARGET },
+    [6]  = { id = 261, kind = "list", ov = OV.FLT_TYPE, flt = 0 },
+    [7]  = { id = 262, kind = "num" },
+    [10] = { id = 288, kind = "list", ov = OV.FLT_TYPE, flt = 1 },
+    [11] = { id = 289, kind = "num" },
 }
 
--- Combined 2-slot Cutoff + Resonance Filter Graph widgets (Control 8 = Filter 1, Control 12 = Filter 2)
 local FILTER_GRAPH_PARAMS = {
     [8]  = { flt = 0, label = "F1", cutoff = { id = 263, def = 50 }, resonance = { id = 274, def = 0 } },
     [12] = { flt = 1, label = "F2", cutoff = { id = 290, def = 50 }, resonance = { id = 301, def = 0 } },
@@ -3943,12 +4212,9 @@ local FILTER_GRAPH_PARAMS = {
 local FLT_TYPE_NAMES = { [0] = "LPF", [1] = "HPF", [2] = "BPF", [3] = "BRF", [4] = "2BPF" }
 local FLT_GRAPH_STEP = 4
 
--- Per-Filter Dynamic Parameters (Filter 1 base = 264, Filter 2 base = 291; offset +27)
--- Controls 21..32: Cutoff/Reso Mod & Key Track (always visible for selected Filter 1 / Filter 2)
--- Controls 33..43: Filter-B (2BPF) parameters (ONLY visible when selected filter's Type == 2BPF!)
 local DYN_DEFS = {
-    -- Cutoff/Resonance Mod & Key Track (Control IDs 21..32, Slots 14..25)
-    [21] = { f1 = 268, f2 = 295, short = "Cut ModEG",  kind = "list", ov = OV.EG_1_5,  defVal = 2 }, -- default index 2 = EG3 (Z1 value 3)
+
+    [21] = { f1 = 268, f2 = 295, short = "Cut ModEG",  kind = "list", ov = OV.EG_1_5,  defVal = 2 },
     [22] = { f1 = 269, f2 = 296, short = "Cut EG Int", kind = "num",  defVal = 0 },
     [23] = { f1 = 270, f2 = 297, short = "Cut Src1",   kind = "list", ov = OV.MODSRC1, defVal = 0 },
     [24] = { f1 = 271, f2 = 298, short = "Cut Int1",   kind = "num",  defVal = 0 },
@@ -3960,7 +4226,7 @@ local DYN_DEFS = {
     [30] = { f1 = 265, f2 = 292, short = "Trk HiKey",  kind = "num",  fmt = "note",    defVal = 60 },
     [31] = { f1 = 266, f2 = 293, short = "Trk LoInt",  kind = "num",  defVal = 0 },
     [32] = { f1 = 267, f2 = 294, short = "Trk HiInt",  kind = "num",  defVal = 0 },
-    -- Filter-B (2BPF second bandpass peak) (Control IDs 33..43, Slots 26..36; hidden unless Type == 2BPF)
+
     [33] = { f1 = 277, f2 = 304, short = "2BPF TrimB",  kind = "num",  defVal = 0,  isB = true },
     [34] = { f1 = 278, f2 = 305, short = "2BPF CutB",   kind = "num",  defVal = 50, isB = true },
     [35] = { f1 = 286, f2 = 313, short = "2BPF ResoB",  kind = "num",  defVal = 0,  isB = true },
@@ -3974,11 +4240,10 @@ local DYN_DEFS = {
     [43] = { f1 = 287, f2 = 314, short = "2BPF ResMd",  kind = "num",  defVal = 0,  isB = true },
 }
 
-local selectedFlt = 0 -- 0 = Filter 1, 1 = Filter 2
+local selectedFlt = 0
 local ready = false
 local suppressDyn = {}
 
--- Per-Filter saved values in memory for controls 21..43
 fltSavedValues = {
     [0] = {},
     [1] = {},
@@ -3988,34 +4253,14 @@ for cid, def in pairs(DYN_DEFS) do
     fltSavedValues[1][cid] = def.defVal
 end
 
--- ============================================================================
--- 3. SysEx Builder & Sender
--- ============================================================================
-
-local function sendParamChange(exId, paramId, signedVal)
-    local dev = preset.getDevice(DEVICE_ID)
-    local body = buildParamChangeBody(exId, paramId, signedVal)
-    if dev then
-        dev:sendSysex(body)
-    else
-        midi.sendSysex(PORT_1, body)
-    end
-end
-
--- ============================================================================
--- 4. Callbacks & Dynamic Assigned EG / 2BPF Updates
--- ============================================================================
-
--- Return the Z1 EG ID (1..5: EG1..EG4, Amp EG) currently assigned to the selected filter's Cutoff Mod EG
 function getActiveFilterEgId()
     local egIdx = fltSavedValues[selectedFlt][21]
     if not egIdx or egIdx < 0 or egIdx > 4 then
-        egIdx = 2 -- default index 2 = EG3
+        egIdx = 2
     end
-    return egIdx + 1 -- 1..5
+    return egIdx + 1
 end
 
--- Update Control 4 (dx7envelope) and Control 5 (Start Level) to show & control the EG assigned to the active filter's Cutoff
 function updateAssignedEgWidget(restoreValues)
     local egId = getActiveFilterEgId()
     local eg   = EGS[egId]
@@ -4135,7 +4380,7 @@ local function setupFilterWidget(cid)
         local function yAt(x)
             local y
             if ftype == 1 then
-                -- HPF (High Pass Filter)
+
                 if x < cx then
                     y = flat - bump + (cx - x) * slope
                 else
@@ -4143,20 +4388,20 @@ local function setupFilterWidget(cid)
                     y = flat - (d < 1 and bump * (1 - d) * (1 - d) or 0)
                 end
             elseif ftype == 2 then
-                -- BPF (Band Pass Filter)
+
                 y = bpfY(x, cx, res)
             elseif ftype == 3 then
-                -- BRF (Band Reject / Notch Filter)
+
                 local bw = w * (0.13 - 0.08 * res)
                 local u = (x - cx) / bw
                 local n2 = u * u
                 local notch = 1 / (1 + n2 * n2)
                 y = flat + notch * (bottom - flat)
             elseif ftype == 4 then
-                -- 2BPF (Dual Band Pass Filter: Band A + Band B)
+
                 y = math.min(bpfY(x, cx, res), bpfY(x, cxB, resB))
             else
-                -- LPF (Low Pass Filter, ftype == 0)
+
                 if x <= cx then
                     local d = (cx - x) / bumpWidth
                     y = flat - (d < 1 and bump * (1 - d) * (1 - d) or 0)
@@ -4226,7 +4471,6 @@ end
 local lastIs2Bpf = nil
 local lastGrpBLabel = nil
 
--- Show Filter-B (2BPF) controls (33..43) ONLY when the selected filter's Type is 2BPF (index 4 / Z1 value 5)
 function updateFilterBVisibility(force)
     local is2Bpf = (fltTypeIdx[selectedFlt] == 4)
     local label  = ((selectedFlt == 0) and "FILTER 1" or "FILTER 2") .. " 2BPF BAND-B (DUAL BANDPASS)"
@@ -4245,7 +4489,6 @@ function updateFilterBVisibility(force)
     end
 end
 
--- Callback for static top-section controls (1..3, 6..12)
 function onStaticFilter(valueObject, value)
     local ctrl = valueObject:getControl()
     local ctrlId = __LID(ctrl:getId())
@@ -4272,15 +4515,12 @@ function onStaticFilter(valueObject, value)
     local z1Val = v
     if spec.kind == "list" then
         local idx = v
-        local defs = ENUM_DEFS[spec.ov]
-        if valueObject.getMin and valueObject:getMin() == 1 and defs and defs[1] and defs[1].value == 1 then
+        local ov = overlays.get(spec.ov)
+        if valueObject.getMin and valueObject:getMin() == 1 and ov and ov:getValueByIndex(0) == 1 then
             idx = v - 1
             z1Val = v
         else
-            local ov = overlays.get(spec.ov)
-            z1Val = (defs and defs[idx + 1] and defs[idx + 1].value)
-                 or (ov and ov:getValueByIndex(idx))
-                 or v
+            z1Val = (ov and ov:getValueByIndex(idx)) or v
         end
         if spec.flt ~= nil then
             if idx < 0 then idx = 0 elseif idx > 4 then idx = 4 end
@@ -4294,7 +4534,6 @@ function onStaticFilter(valueObject, value)
     sendParamChange(0, spec.id, z1Val)
 end
 
--- Callback for Control 4: Assigned Cutoff EG dx7envelope handles (l1..l4, r1..r4)
 function onEg3Handle(valueObject, value)
     local egId = getActiveFilterEgId()
     local eg   = EGS[egId]
@@ -4310,12 +4549,11 @@ function onEg3Handle(valueObject, value)
 
     local paramId = eg.curve[handleId]
     if not paramId then
-        return -- e.g. Amp EG l4 (Release Level is reserved on Z1)
+        return
     end
     sendParamChange(0, paramId, v)
 end
 
--- Callback for Control 5: Assigned Cutoff EG Start Level (EG1..EG4; hidden for Amp EG)
 function onEgStartLevel(valueObject, value)
     local ctrl = valueObject:getControl()
     if not ctrl:isVisible() then
@@ -4334,7 +4572,6 @@ function onEgStartLevel(valueObject, value)
     sendParamChange(0, eg.curve.start, v)
 end
 
--- Relabel & restore saved values for Filter 1 / Filter 2 dynamic controls (21..43) + Assigned Cutoff EG widget
 function updateFilterControls()
     local prefix = (selectedFlt == 0) and "F1 " or "F2 "
     local label  = (selectedFlt == 0) and "FILTER 1" or "FILTER 2"
@@ -4358,7 +4595,6 @@ function updateFilterControls()
     updateFilterBVisibility()
 end
 
--- Callback for Control 20: Filter Target Selector (0 = Filter 1, 1 = Filter 2)
 function onFilterSelect(valueObject, value)
     local newFlt = math.floor(value)
     if newFlt < 0 or newFlt > 1 or newFlt == selectedFlt then
@@ -4369,7 +4605,6 @@ function onFilterSelect(valueObject, value)
     info.setText(selectedFlt == 0 and "Editing Filter 1" or "Editing Filter 2")
 end
 
--- Callback for Dynamic Filter Controls (21..43)
 function onDynFilter(valueObject, value)
     if not ready then
         return
@@ -4390,7 +4625,6 @@ function onDynFilter(valueObject, value)
     end
     fltSavedValues[selectedFlt][ctrlId] = v
 
-    -- When Cutoff Mod EG (control 21) changes, snap the dx7envelope widget to the newly assigned EG!
     if ctrlId == 21 then
         updateAssignedEgWidget(true)
     elseif ctrlId == 34 or ctrlId == 35 then
@@ -4405,10 +4639,6 @@ function onDynFilter(valueObject, value)
     end
     sendParamChange(0, paramId, z1Val)
 end
-
--- ============================================================================
--- 5. Lifecycle Hooks
--- ============================================================================
 
 function preset.onLoad()
     for ovId, items in pairs(ENUM_DEFS) do
@@ -4446,29 +4676,6 @@ function preset.onReady()
     repaintFilterWidget(1)
     ready = true
     info.setText("Z1 Filter Ready")
-end
-
-local function z1ValToIdx(ovId, z1Val)
-    if not ovId then return z1Val end
-    local defs = ENUM_DEFS[ovId]
-    if type(defs) == "table" then
-        for i, item in ipairs(defs) do
-            if type(item) == "table" and item.value == z1Val then return i - 1 end
-        end
-    end
-    local ov = overlays.get(ovId)
-    if ov and ov.getIndexByValue then
-        local idx = ov:getIndexByValue(z1Val)
-        if idx ~= nil then return idx end
-    end
-    if ov and ov.getValueByIndex then
-        for i = 0, 63 do
-            local v = ov:getValueByIndex(i)
-            if v == nil then break end
-            if v == z1Val then return i end
-        end
-    end
-    return z1Val
 end
 
 local function syncEgCurveFromParams(p0)
@@ -4582,12 +4789,13 @@ end
 
 do
     local env = __makeEnv("z1-filter",
-        {[1]=304,[2]=305,[3]=306,[4]=310,[5]=311,[6]=307,[7]=308,[8]=309,[10]=312,[11]=313,[12]=314,[20]=315,[21]=316,[22]=317,[23]=318,[24]=319,[25]=320,[26]=321,[27]=322,[28]=323,[29]=324,[30]=325,[31]=326,[32]=327,[33]=328,[34]=329,[35]=330,[36]=331,[37]=332,[38]=333,[39]=334,[40]=335,[41]=336,[42]=337,[43]=338,[50]=301,[51]=302,[52]=303},
-        {[1]=27,[2]=20,[3]=28,[4]=29,[5]=31,[6]=30},
+        {[1]=371,[2]=372,[3]=373,[4]=377,[5]=378,[6]=374,[7]=375,[8]=376,[10]=379,[11]=380,[12]=381,[20]=382,[21]=383,[22]=384,[23]=385,[24]=386,[25]=387,[26]=388,[27]=389,[28]=390,[29]=391,[30]=392,[31]=393,[32]=394,[33]=395,[34]=396,[35]=397,[36]=398,[37]=399,[38]=400,[39]=401,[40]=402,[41]=403,[42]=404,[43]=405,[50]=368,[51]=369,[52]=370},
+        {[1]=44,[2]=21,[3]=45,[4]=46,[5]=48,[6]=47},
         {[1]=8})
     env.fmtNote = function(...) return _G["oc_fmtNote"](...) end
     local ok, err = pcall(__module_z1_filter, env)
     if not ok then print("Z1 merged: error loading z1-filter: " .. tostring(err)) end
+    if rawget(_G, "EGS") == nil then _G.EGS = env.EGS end
     if rawget(_G, "getActiveFilterEgId") == nil then _G.getActiveFilterEgId = env.getActiveFilterEgId end
     if rawget(_G, "updateAssignedEgWidget") == nil then _G.updateAssignedEgWidget = env.updateAssignedEgWidget end
     if rawget(_G, "updateFilterBVisibility") == nil then _G.updateFilterBVisibility = env.updateFilterBVisibility end
@@ -4603,38 +4811,9 @@ end
 -- module z1-mod  (prefix md_)
 -- ==========================================================================
 local function __module_z1_mod(_ENV)
--- Korg Z1 - Amp 1 & 2, Output/Pan, OSC1 Pitch/Mod & Performance Editor (PE Knobs 1..5) for Electra One mk2
--- Covers:
---   [Amp 1]      (IDs 315..320, 322..323; 8 active params, ExID = 0)
---   [Amp 2]      (IDs 324..329, 331..332; 8 active params, ExID = 0)
---   [Output]     (IDs 352..355; 4 params: Panpot, Pan Mod Src, Pan Mod Int, Output Level, ExID = 0)
---   [OSC1 Pitch] (IDs 175..187; 13 params: Octave, Semi, Fine, Offset, Slope, Pitch Mod 1/2, ExID = 0)
---   [PE Knob1-5] (IDs 384..463; 80 params: 5 knobs x 4 targets x 4 params, ExID = 0)
---
--- Layout (36 slots across 3 Control Sets):
---   Control Set 1 (Rows 1-2, Slots 1..12):
---     Row 1 (Slots 1..6):  [1] Amp1 Level (315), [2] Amp1 ModEG (320), [3] Amp1 ModSrc (322), [4] Amp1 ModInt (323), [5] Out Pan (352), [6] Out Level (355)
---     Row 2 (Slots 7..12): [7] Amp2 Level (324), [8] Amp2 ModEG (329), [9] Amp2 ModSrc (331), [10] Amp2 ModInt (332),[11] Pan ModSrc (353),[12] Pan ModInt (354)
---   Control Set 2 (Rows 3-4, Slots 13..24):
---     Row 3 (Slots 13..16): [13] Amp1 LoKey (316), [14] Amp1 HiKey (317), [15] Amp1 LoInt (318), [16] Amp1 HiInt (319)
---     Row 4 (Slots 19..22): [19] Amp2 LoKey (325), [20] Amp2 HiKey (326), [21] Amp2 LoInt (327), [22] Amp2 HiInt (328)
---     Slot 18:              [18] MOD SELECT (0 = OSC1 Pitch/Mod, 1..5 = PE Knob 1..5)
---   Control Set 3 (Rows 5-6, Slots 23..36):
---     Dynamic slots for OSC1 Pitch/Mod (13 params, IDs 175..187) OR PE Knob 1..5 (16 params per knob, IDs 384..463)
+
 
 local DEVICE_ID = 1
-
-local function getGlobalChannel()
-    local dev = preset.getDevice(DEVICE_ID)
-    if dev then
-        return (dev:getChannel() - 1) & 0x0F
-    end
-    return 0
-end
-
--- ============================================================================
--- 1. Overlays & Enumerations
--- ============================================================================
 
 local OV = {
     MODSRC1    = 1,
@@ -4644,96 +4823,33 @@ local OV = {
     PE_CURVE   = 5,
 }
 
-local ENUM_DEFS = {
-    [OV.MODSRC1] = MODSRC1,
-    [OV.EG_1_5] = {
-        { value = 1, label = "EG1" },
-        { value = 2, label = "EG2" },
-        { value = 3, label = "EG3" },
-        { value = 4, label = "EG4" },
-        { value = 5, label = "Amp EG" },
-    },
-    [OV.MOD_SELECT] = {
-        { value = 0, label = "OSC1 Pitch/Mod" },
-        { value = 1, label = "PE Knob 1" },
-        { value = 2, label = "PE Knob 2" },
-        { value = 3, label = "PE Knob 3" },
-        { value = 4, label = "PE Knob 4" },
-        { value = 5, label = "PE Knob 5" },
-    },
-    [OV.OCTAVE] = {
-        { value = 0, label = "32'" },
-        { value = 1, label = "16'" },
-        { value = 2, label = "8'" },
-        { value = 3, label = "4'" },
-    },
-    [OV.PE_CURVE] = {
-        { value = 0, label = "LINEAR" },
-        { value = 1, label = "EXP" },
-        { value = 2, label = "LOG" },
-        { value = 3, label = "SWITCH" },
-    },
-}
-
--- ============================================================================
--- 2. Static Amp 1 / Amp 2 / Output Parameters & Dynamic Bottom Section
--- ============================================================================
+local ENUM_DEFS = {}
 
 STATIC_AMP_MAP = {
-    -- Row 1: Amp 1 Core + Panpot & Output Level
+
     [1]  = { id = 315, kind = "num" },
     [2]  = { id = 320, kind = "list", ov = OV.EG_1_5 },
     [3]  = { id = 322, kind = "list", ov = OV.MODSRC1 },
     [4]  = { id = 323, kind = "num" },
     [5]  = { id = 352, kind = "num",  fmt = "pan" },
     [6]  = { id = 355, kind = "num" },
-    -- Row 2: Amp 2 Core + Panpot Mod Src + MOD SELECT (Control 12)
+
     [7]  = { id = 324, kind = "num" },
     [8]  = { id = 329, kind = "list", ov = OV.EG_1_5 },
     [9]  = { id = 331, kind = "list", ov = OV.MODSRC1 },
     [10] = { id = 332, kind = "num" },
     [11] = { id = 353, kind = "list", ov = OV.MODSRC1 },
-    -- Row 3 (Cols 1..4): Amp 1 Key Track
+
     [13] = { id = 316, kind = "num",  fmt = "note" },
     [14] = { id = 317, kind = "num",  fmt = "note" },
     [15] = { id = 318, kind = "num" },
     [16] = { id = 319, kind = "num" },
-    -- Row 4 (Cols 1..4): Amp 2 Key Track
+
     [19] = { id = 325, kind = "num",  fmt = "note" },
     [20] = { id = 326, kind = "num",  fmt = "note" },
     [21] = { id = 327, kind = "num" },
     [22] = { id = 328, kind = "num" },
 }
-
--- Dynamic slots: 16 slots mapped to controls 100+s (fader) / 200+s (list) for s = 1..16
--- Slots 1..2 are Row 3 Col 5 & Row 4 Col 5 (controls 101/201, 102/202)
--- Slots 3..4 are Row 4 Col 6 & Row 3 Col 6 (Wait: Slot 18 is MOD SELECT at Row 3 Col 6; let's use Slots 1..16 at positions:
---   s=1: Row 3 Col 5, s=2: Row 4 Col 5, s=3: Row 4 Col 6, s=4..9: Row 5 Cols 1..6, s=10..15: Row 6 Cols 1..6, s=16: Row 3 Col 6 if needed,
---   OR even cleaner: put MOD SELECT at Slot 17 (Row 3 Col 5), leave Slot 18 empty, and put 16 dynamic slots across:
---     s=1..2 (Row 3 Col 6, Row 4 Col 5..6) + Row 5 (6 slots) + Row 6 (6 slots) = 15 or 16 slots!)
--- Let's check:
---   Row 3 has 4 Amp1 KeyTrack controls (Cols 1..4) -> Col 5 is MOD SELECT (Control 17), Col 6 is Dyn Slot 1
---   Row 4 has 4 Amp2 KeyTrack controls (Cols 1..4) -> Col 5 is Dyn Slot 2, Col 6 is Dyn Slot 3
---   Row 5 (Cols 1..6) -> Dyn Slots 4..9
---   Row 6 (Cols 1..6) -> Dyn Slots 10..15
---   Wait: 15 dynamic slots is enough for OSC1 Pitch/Mod (13 params)! What about PE Knob 1..5 (16 params = 4 targets x 4 params)?
---   If we put Amp1 LoKey/HiKey/LoInt/HiInt in Row 3 Cols 1..4 and Amp2 LoKey/HiKey/LoInt/HiInt in Row 4 Cols 1..4,
---   we have 4 slots in Rows 3-4 (Row 3 Cols 5-6 and Row 4 Cols 5-6) + 12 slots in Rows 5-6 = 16 slots!
---   Wait where does MOD SELECT go if those 16 slots are used?
---   Look at Row 1 & Row 2: all 12 slots are used.
---   What if PE Knob has 4 targets (A, B, C, D) x 4 params (Param, Left, Right, Curve) = 16 params, OR what if MOD SELECT is in Row 3 Col 5 and PE Knob shows 3 targets (12 params) or we have a 7-item MOD SELECT (`OSC1 Pitch/Mod`, `PE Knob 1`, `PE Knob 2`, `PE Knob 3`, `PE Knob 4`, `PE Knob 5`) where `PE Knob` shows Targets 1..3 (12 params) + Target 4 Param/Left/Right (15 params)?
---   Even better! Why not put `Out Pan (352)` and `Out Level (355)` in Row 1 Cols 5..6, and put `Pan ModSrc (353)` and `Pan ModInt (354)` inside the `OSC1 Pitch & Output Mod` dynamic view (13 + 2 = 15 params!) so Row 2 Cols 5..6 are FREE?
---   WAIT A SECOND! Count that!
---   If `Pan ModSrc (353)` and `Pan ModInt (354)` are in `OSC1 Pitch & Pan Mod` (13 + 2 = 15 params), then:
---   Row 2 Col 5 = `Pan ModSrc (353)`, Row 2 Col 6 = `MOD SELECT` (Control 18), and `Pan ModInt (354)` is in `OSC1 Pitch & Mod` (14 params), leaving ALL 16 slots (Row 3 Cols 5..6, Row 4 Cols 5..6, Row 5 Cols 1..6, Row 6 Cols 1..6) for the 16 dynamic parameters of `PE Knob 1..5`!
---   Let's verify that count!
---     Row 1 (6): [1] Amp1 Lvl (315), [2] Amp1 ModEG (320), [3] Amp1 ModSrc (322), [4] Amp1 ModInt (323), [5] Out Pan (352), [6] Out Level (355)
---     Row 2 (6): [7] Amp2 Lvl (324), [8] Amp2 ModEG (329), [9] Amp2 ModSrc (331), [10] Amp2 ModInt (332), [11] Pan ModSrc (353), [12] MOD SELECT
---     Row 3 (6): [13] Amp1 LoKey (316), [14] Amp1 HiKey (317), [15] Amp1 LoInt (318), [16] Amp1 HiInt (319), [Dyn 1], [Dyn 2]
---     Row 4 (6): [19] Amp2 LoKey (325), [20] Amp2 HiKey (326), [21] Amp2 LoInt (327), [22] Amp2 HiInt (328), [Dyn 3], [Dyn 4]
---     Row 5 (6): [Dyn 5] .. [Dyn 10]
---     Row 6 (6): [Dyn 11] .. [Dyn 16]
---   Total = 20 static controls + 16 dynamic slots = 36 slots! Every single parameter of PE Knob 1..5 (all 16 per knob = 80 params) AND all 14 OSC1 Pitch/Mod + Pan ModInt parameters fit in those 16 dynamic slots!
 
 OSC1_PITCH_DEFS = {
     { id = 175, name = "O1 Octave",   kind = "list", ov = OV.OCTAVE,  color = ORANGE, defVal = 2 },
@@ -4753,7 +4869,7 @@ OSC1_PITCH_DEFS = {
 }
 
 local function buildPeKnobDefs(knobIdx)
-    -- knobIdx: 1..5 -> base = 384 + (knobIdx - 1) * 16
+
     local base = 384 + (knobIdx - 1) * 16
     local prefix = "K" .. knobIdx .. " "
     local defs = {}
@@ -4790,39 +4906,9 @@ function fmtPan(_valueObject, value)
 end
 
 function fmtDynSlot(valueObject, value)
-    local slot = __LID(valueObject:getControl():getId()) % 100
-    local def = activeDynDef[slot]
-    local v = math.floor(value)
-    if not def or not def.fmt then
-        return tostring(v)
-    end
-    if def.fmt == "hz10" then
-        return string.format("%+.1f Hz", v / 10.0)
-    elseif def.fmt == "slope" then
-        return string.format("%+.2f", v / 50.0)
-    elseif def.fmt == "note" then
-        return fmtNote(valueObject, value)
-    end
-    return tostring(v)
+    local slot = __LID(valueObject:getControl():getId()) % 50
+    return formatSlotValue(activeDynDef[slot], value)
 end
-
--- ============================================================================
--- 3. SysEx Builder & Sender
--- ============================================================================
-
-local function sendParamChange(exId, paramId, signedVal)
-    local dev = preset.getDevice(DEVICE_ID)
-    local body = buildParamChangeBody(exId, paramId, signedVal)
-    if dev then
-        dev:sendSysex(body)
-    else
-        midi.sendSysex(PORT_1, body)
-    end
-end
-
--- ============================================================================
--- 4. Callbacks & Dynamic Section Relayout
--- ============================================================================
 
 function applyModSection(secIdx)
     local defs = DYN_SECTIONS[secIdx]
@@ -4840,52 +4926,7 @@ function applyModSection(secIdx)
         grp:setLabel(title)
     end
 
-    for s = 1, 16 do
-        local def = defs[s]
-        local fader = controls.get(100 + s)
-        local list  = controls.get(200 + s)
-
-        if not def then
-            fader:setVisible(false)
-            list:setVisible(false)
-        elseif def.kind == "list" then
-            activeDynDef[s] = def
-            fader:setVisible(false)
-
-            local initVal = modSaved[def.id]
-            if initVal == nil then initVal = def.defVal or 0 end
-
-            local vo = list:getValue("value")
-            vo:setOverlayId(__OV(def.ov))
-            suppressDyn[200 + s] = true
-            vo:updateValue(initVal)
-            suppressDyn[200 + s] = nil
-            list:setName(def.name)
-            list:setColor(def.color or PURPLE)
-            list:setVisible(true)
-        else
-            activeDynDef[s] = def
-            list:setVisible(false)
-
-            local neutral = def.defVal
-            if neutral == nil then
-                neutral = (def.min < 0 and def.max > 0) and 0 or def.min
-            end
-            local initVal = modSaved[def.id]
-            if initVal == nil then initVal = neutral end
-
-            local vo = fader:getValue("value")
-            local span = def.max - def.min
-            vo:getMessage():setRange(0, span)
-            vo:setRange(def.min, def.max, neutral, false)
-            suppressDyn[100 + s] = true
-            vo:updateValue(initVal)
-            suppressDyn[100 + s] = nil
-            fader:setName(def.name)
-            fader:setColor(def.color or WHITE)
-            fader:setVisible(true)
-        end
-    end
+    applyDynamicSlots(defs, 1, 16, 0, 100, 200, activeDynDef, modSaved, nil, suppressDyn)
     window.resume()
 end
 
@@ -4922,7 +4963,7 @@ function onDynMod(valueObject, value)
     if not ctrl:isVisible() then
         return
     end
-    local s = ctrlId % 100
+    local s = ctrlId % 50
     local def = activeDynDef[s]
     if not def then
         return
@@ -4938,10 +4979,6 @@ function onDynMod(valueObject, value)
     end
     sendParamChange(0, def.id, z1Val)
 end
-
--- ============================================================================
--- 5. Lifecycle Hooks
--- ============================================================================
 
 function preset.onLoad()
     for ovId, items in pairs(ENUM_DEFS) do
@@ -4959,23 +4996,6 @@ function preset.onReady()
     controls.get(12):getValue("value"):updateValue(0)
     applyModSection(0)
     info.setText("Z1 Amp/Out/Mod Ready")
-end
-
-local function z1ValToIdx(ovId, z1Val)
-    if not ovId then return z1Val end
-    local ov = overlays.get(ovId)
-    if ov and ov.getIndexByValue then
-        local idx = ov:getIndexByValue(z1Val)
-        if idx ~= nil then return idx end
-    end
-    if ov and ov.getValueByIndex then
-        for i = 0, 63 do
-            local v = ov:getValueByIndex(i)
-            if v == nil then break end
-            if v == z1Val then return i end
-        end
-    end
-    return z1Val
 end
 
 function preset.onZ1Param(exId, paramId, z1Val)
@@ -5026,8 +5046,8 @@ end
 
 do
     local env = __makeEnv("z1-mod",
-        {[1]=342,[2]=343,[3]=344,[4]=345,[5]=346,[6]=347,[7]=348,[8]=349,[9]=350,[10]=351,[11]=352,[12]=353,[13]=354,[14]=355,[15]=356,[16]=357,[19]=362,[20]=363,[21]=364,[22]=365,[50]=339,[51]=340,[52]=341,[101]=358,[102]=360,[103]=366,[104]=368,[105]=370,[106]=372,[107]=374,[108]=376,[109]=378,[110]=380,[111]=382,[112]=384,[113]=386,[114]=388,[115]=390,[116]=392,[201]=359,[202]=361,[203]=367,[204]=369,[205]=371,[206]=373,[207]=375,[208]=377,[209]=379,[210]=381,[211]=383,[212]=385,[213]=387,[214]=389,[215]=391,[216]=393},
-        {[1]=20,[2]=31,[3]=32,[4]=19,[5]=58},
+        {[1]=409,[2]=410,[3]=411,[4]=412,[5]=413,[6]=414,[7]=415,[8]=416,[9]=417,[10]=418,[11]=419,[12]=420,[13]=421,[14]=422,[15]=423,[16]=424,[19]=429,[20]=430,[21]=431,[22]=432,[50]=406,[51]=407,[52]=408,[101]=425,[102]=427,[103]=433,[104]=435,[105]=437,[106]=439,[107]=441,[108]=443,[109]=445,[110]=447,[111]=449,[112]=451,[113]=453,[114]=455,[115]=457,[116]=459,[159]=461,[161]=462,[163]=463,[164]=464,[201]=426,[202]=428,[203]=434,[204]=436,[205]=438,[206]=440,[207]=442,[208]=444,[209]=446,[210]=448,[211]=450,[212]=452,[213]=454,[214]=456,[215]=458,[216]=460},
+        {[1]=21,[2]=48,[3]=49,[4]=20,[5]=50},
         {[1]=9})
     env.fmtNote = function(...) return _G["oc_fmtNote"](...) end
     local ok, err = pcall(__module_z1_mod, env)
@@ -5044,79 +5064,12 @@ end
 -- module z1-eg  (prefix eg_)
 -- ==========================================================================
 local function __module_z1_eg(_ENV)
--- Korg Z1 - Envelopes (EG1..EG4 & Amp EG) for Electra One mk2
--- Uses 5 dx7envelope widgets (8 curve params each) + Start Level faders
--- + Reveal Modulations toggle & EG Target selector for the 10 Mod params per EG.
+
 
 local DEVICE_ID = 1
 
-local function getGlobalChannel()
-    local dev = preset.getDevice(DEVICE_ID)
-    if dev then
-        return (dev:getChannel() - 1) & 0x0F
-    end
-    return 0
-end
-
--- ============================================================================
--- 1. Modulation Source List 1 (49 entries, 0..48) & EG Selector List
--- ============================================================================
-
-EG_TARGETS = {
-    { value = 0, label = "EG 1" },
-    { value = 1, label = "EG 2" },
-    { value = 2, label = "EG 3" },
-    { value = 3, label = "EG 4" },
-}
-
 local OV_EG_TARGET = 1
 local OV_MODSRC1   = 2
-
--- ============================================================================
--- 2. Z1 Envelope Parameter Table (IDs from PROG_PRM.TXT, ExID = 0)
--- ============================================================================
--- Each EG has 9 curve parameters + 10 modulation parameters:
--- Curve: start, r1(AtkTime), l1(AtkLvl), r2(DcyTime), l2(BrkLvl), r3(SlpTime), l3(SusLvl), r4(RlsTime), l4(RlsLvl)
--- Mod:   [1]=LvlModSrc, [2]=LvlModInt, [3]=LvlVel, [4]=TimeModSrc, [5]=TimeModInt,
---        [6]=NodeModSrc, [7]=AtkModInt, [8]=DcyModInt, [9]=SlpModInt, [10]=RlsModInt
-
-EGS = {
-    -- 0: EG1 (IDs 31..49)
-    [0] = {
-        name = "EG1",
-        isAmp = false,
-        curve = { start = 31, r1 = 32, l1 = 33, r2 = 34, l2 = 35, r3 = 36, l3 = 37, r4 = 38, l4 = 39 },
-        mod   = { 40, 41, 42, 43, 44, 45, 46, 47, 48, 49 },
-    },
-    -- 1: EG2 (IDs 50..68)
-    [1] = {
-        name = "EG2",
-        isAmp = false,
-        curve = { start = 50, r1 = 51, l1 = 52, r2 = 53, l2 = 54, r3 = 55, l3 = 56, r4 = 57, l4 = 58 },
-        mod   = { 59, 60, 61, 62, 63, 64, 65, 66, 67, 68 },
-    },
-    -- 2: EG3 (IDs 69..87)
-    [2] = {
-        name = "EG3",
-        isAmp = false,
-        curve = { start = 69, r1 = 70, l1 = 71, r2 = 72, l2 = 73, r3 = 74, l3 = 75, r4 = 76, l4 = 77 },
-        mod   = { 78, 79, 80, 81, 82, 83, 84, 85, 86, 87 },
-    },
-    -- 3: EG4 (IDs 88..106)
-    [3] = {
-        name = "EG4",
-        isAmp = false,
-        curve = { start = 88, r1 = 89, l1 = 90, r2 = 91, l2 = 92, r3 = 93, l3 = 94, r4 = 95, l4 = 96 },
-        mod   = { 97, 98, 99, 100, 101, 102, 103, 104, 105, 106 },
-    },
-    -- 4: Amp EG (IDs 334..351; 333 Start and 341 Release Level are reserved on Z1)
-    [4] = {
-        name = "Amp EG",
-        isAmp = true,
-        curve = { start = nil, r1 = 334, l1 = 335, r2 = 336, l2 = 337, r3 = 338, l3 = 339, r4 = 340, l4 = nil },
-        mod   = { 342, 343, 344, 345, 346, 347, 348, 349, 350, 351 },
-    },
-}
 
 local MOD_LABELS = {
     { short = "Lvl Src",  kind = "list" },
@@ -5131,16 +5084,8 @@ local MOD_LABELS = {
     { short = "Rls Mod",  kind = "num"  },
 }
 
--- Control IDs in preset.json:
--- 1..5:   dx7envelope widgets for EG1..EG4, Amp EG (Slots 1..5)
--- 11..14: Start Level faders for EG1..EG4 (Slots 7..10)
--- 21..30: Amp EG Modulations (Slots 13..22, Control Set 2 - always visible, dedicated to Amp EG)
--- 20:     EG 1..4 Selector list (Slot 25, Control Set 3)
--- 31..40: EG 1..4 Modulations (Slots 26..35, Control Set 3 - always visible, switches between EG1..EG4)
-
 local selectedEg = 0
 
--- Shared EG curve state (1..5: EG1..EG4, Amp EG) synced with z1-filter's Assigned Cutoff EG view
 egCurveSaved = _G.egCurveSaved or {}
 _G.egCurveSaved = egCurveSaved
 for egId = 1, 5 do
@@ -5172,7 +5117,6 @@ _G.onFilterEgCurveChanged = function(egId, handleId, val)
     end
 end
 
--- Per-EG saved modulation values in memory so switching EG1..EG4 restores each EG's values
 egModValues = {
     [0] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
     [1] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
@@ -5181,57 +5125,34 @@ egModValues = {
     [4] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
 }
 
--- ============================================================================
--- 3. SysEx Builder & Sender
--- ============================================================================
-
-local function sendParamChange(exId, paramId, signedVal)
-    local dev = preset.getDevice(DEVICE_ID)
-    local body = buildParamChangeBody(exId, paramId, signedVal)
-    if dev then
-        dev:sendSysex(body)
-    else
-        midi.sendSysex(PORT_1, body)
-    end
-end
-
--- ============================================================================
--- 4. Callbacks for Envelopes, Start Levels, Amp EG Mod & EG 1..4 Mod
--- ============================================================================
-
--- Callback for dx7envelope controls 1..5 (handles l1, r1, l2, r2, l3, r3, l4, r4)
 function onEnvHandle(valueObject, value)
-    local ctrlId = __LID(valueObject:getControl():getId())
-    local egIdx = ctrlId - 1
-    local eg = EGS[egIdx]
+    local egId = __LID(valueObject:getControl():getId())
+    local eg = EGS[egId]
     if not eg then
         return
     end
     local handleId = __LID(valueObject:getId())
     local v = math.floor(value)
-    if egCurveSaved and egCurveSaved[ctrlId] then
-        egCurveSaved[ctrlId][handleId] = v
+    if egCurveSaved and egCurveSaved[egId] then
+        egCurveSaved[egId][handleId] = v
     end
     if _G.onSharedEgCurveChanged then
-        _G.onSharedEgCurveChanged(ctrlId)
+        _G.onSharedEgCurveChanged(egId)
     end
     local paramId = eg.curve[handleId]
     if not paramId then
-        return -- e.g. Amp EG l4 (Release Level is fixed at 0 on Z1)
+        return
     end
     sendParamChange(0, paramId, v)
 end
 
--- Callback for Start Level faders 11..14 (EG1..EG4)
 function onStartLevel(valueObject, value)
-    local ctrlId = __LID(valueObject:getControl():getId())
-    local egIdx = ctrlId - 11
-    local eg = EGS[egIdx]
+    local egId = __LID(valueObject:getControl():getId()) - 10
+    local eg = EGS[egId]
     if not eg or not eg.curve.start then
         return
     end
     local v = math.floor(value)
-    local egId = egIdx + 1
     if egCurveSaved and egCurveSaved[egId] then
         egCurveSaved[egId].start = v
     end
@@ -5241,32 +5162,8 @@ function onStartLevel(valueObject, value)
     sendParamChange(0, eg.curve.start, v)
 end
 
--- Callback for dedicated Amp EG Modulation controls 21..30 (middle section, Control Set 2)
-function onAmpEgMod(valueObject, value)
-    local ctrl = valueObject:getControl()
-    local idx = __LID(ctrl:getId()) - 20
-    local eg = EGS[4]
-    if not eg or not eg.mod[idx] then
-        return
-    end
-
-    local v = math.floor(value)
-    egModValues[4][idx] = v
-
-    local paramId = eg.mod[idx]
-    local z1Val
-    if MOD_LABELS[idx].kind == "list" then
-        local ov = overlays.get(OV_MODSRC1)
-        z1Val = (ov and ov:getValueByIndex(v)) or v
-    else
-        z1Val = v
-    end
-    sendParamChange(0, paramId, z1Val)
-end
-
--- Update labels and restore saved values for the 10 EG 1..4 Modulation controls (IDs 31..40)
 function updateEgModControls()
-    local eg = EGS[selectedEg]
+    local eg = EGS[selectedEg + 1]
     if not eg then
         return
     end
@@ -5290,43 +5187,36 @@ function updateEgModControls()
     window.resume()
 end
 
--- Callback for Control 20: EG 1..4 Target selector (0..3)
-function onEgSelect(valueObject, value)
+function onEgSelect(_valueObject, value)
     local newEg = math.floor(value)
     if newEg < 0 or newEg > 3 or newEg == selectedEg then
         return
     end
     selectedEg = newEg
     updateEgModControls()
-    info.setText("Editing " .. EGS[selectedEg].name .. " Mod")
+    info.setText("Editing " .. EGS[selectedEg + 1].name .. " Mod")
 end
 
--- Callback for Controls 31..40 (bottom section, Control Set 3: EG 1..4 Modulations)
 function onEgMod(valueObject, value)
-    local ctrl = valueObject:getControl()
-    local idx = __LID(ctrl:getId()) - 30
-    local eg = EGS[selectedEg]
+    local ctrlId = __LID(valueObject:getControl():getId())
+    local isAmp = (ctrlId <= 30)
+    local egIdx = isAmp and 4 or selectedEg
+    local idx = isAmp and (ctrlId - 20) or (ctrlId - 30)
+    local eg = EGS[egIdx + 1]
     if not eg or not eg.mod[idx] then
         return
     end
 
     local v = math.floor(value)
-    egModValues[selectedEg][idx] = v
+    egModValues[egIdx][idx] = v
 
-    local paramId = eg.mod[idx]
-    local z1Val
+    local z1Val = v
     if MOD_LABELS[idx].kind == "list" then
         local ov = overlays.get(OV_MODSRC1)
         z1Val = (ov and ov:getValueByIndex(v)) or v
-    else
-        z1Val = v
     end
-    sendParamChange(0, paramId, z1Val)
+    sendParamChange(0, eg.mod[idx], z1Val)
 end
-
--- ============================================================================
--- 5. Lifecycle Hooks
--- ============================================================================
 
 function preset.onLoad()
     overlays.create(OV_EG_TARGET, EG_TARGETS)
@@ -5348,9 +5238,9 @@ local EG_HANDLES = { "l1", "r1", "l2", "r2", "l3", "r3", "l4", "r4" }
 
 function preset.onZ1Param(exId, paramId, z1Val)
     if exId ~= 0 then return end
-    for egIdx = 0, 4 do
-        local eg = EGS[egIdx]
-        local egId = egIdx + 1
+    for egId = 1, 5 do
+        local egIdx = egId - 1
+        local eg = EGS[egId]
         if eg.curve.start == paramId then
             if egCurveSaved and egCurveSaved[egId] then egCurveSaved[egId].start = z1Val end
             local sc = controls.get(10 + egId)
@@ -5388,9 +5278,9 @@ end
 function preset.onZ1Dump(params)
     local p0 = params and params[0]
     if not p0 then return end
-    for egIdx = 0, 4 do
-        local eg = EGS[egIdx]
-        local egId = egIdx + 1
+    for egId = 1, 5 do
+        local egIdx = egId - 1
+        local eg = EGS[egId]
         if eg.curve.start and p0[eg.curve.start] ~= nil then
             local v = p0[eg.curve.start]
             if egCurveSaved and egCurveSaved[egId] then egCurveSaved[egId].start = v end
@@ -5427,79 +5317,25 @@ end
 
 do
     local env = __makeEnv("z1-eg",
-        {[1]=397,[2]=398,[3]=399,[4]=400,[5]=401,[11]=402,[12]=403,[13]=404,[14]=405,[20]=416,[21]=406,[22]=407,[23]=408,[24]=409,[25]=410,[26]=411,[27]=412,[28]=413,[29]=414,[30]=415,[31]=417,[32]=418,[33]=419,[34]=420,[35]=421,[36]=422,[37]=423,[38]=424,[39]=425,[40]=426,[50]=394,[51]=395,[52]=396},
-        {[1]=33,[2]=20},
+        {[1]=468,[2]=469,[3]=470,[4]=471,[5]=472,[11]=473,[12]=474,[13]=475,[14]=476,[20]=487,[21]=477,[22]=478,[23]=479,[24]=480,[25]=481,[26]=482,[27]=483,[28]=484,[29]=485,[30]=486,[31]=488,[32]=489,[33]=490,[34]=491,[35]=492,[36]=493,[37]=494,[38]=495,[39]=496,[40]=497,[50]=465,[51]=466,[52]=467},
+        {[1]=51,[2]=21},
         {[1]=10})
     local ok, err = pcall(__module_z1_eg, env)
     if not ok then print("Z1 merged: error loading z1-eg: " .. tostring(err)) end
     if rawget(_G, "updateEgModControls") == nil then _G.updateEgModControls = env.updateEgModControls end
     __export(env, "eg_onEnvHandle", "onEnvHandle")
     __export(env, "eg_onStartLevel", "onStartLevel")
-    __export(env, "eg_onAmpEgMod", "onAmpEgMod")
-    __export(env, "eg_onEgSelect", "onEgSelect")
     __export(env, "eg_onEgMod", "onEgMod")
+    __export(env, "eg_onEgSelect", "onEgSelect")
 end
 
 -- ==========================================================================
 -- module z1-lfo  (prefix lf_)
 -- ==========================================================================
 local function __module_z1_lfo(_ENV)
--- Korg Z1 - LFO 1..4 Page for Electra One mk2
--- Includes custom waveform visualizer widgets (inspired by roomi-fields/electraone-widgets graph/send-lfo)
--- that draw the live Z1 LFO waveform (all 18 Z1 LFO wave shapes + Offset shift + Fade-In envelope)!
---
--- Layout (36 slots across 3 Control Sets):
---   Control Set 1 (Rows 1-2, Slots 1..12):
---     Row 1 (Slots 1..6):  [1] LFO1 Wave (list), [2] LFO1 Shape (custom graph), [3] LFO1 Freq,
---                          [4] LFO2 Wave (list), [5] LFO2 Shape (custom graph), [6] LFO2 Freq
---     Row 2 (Slots 7..12): [7] LFO1 KeySync,     [8] LFO1 FadeIn,               [9] LFO1 Offset,
---                         [10] LFO2 KeySync,    [11] LFO2 FadeIn,              [12] LFO2 Offset
---   Control Set 2 (Rows 3-4, Slots 13..24):
---     Row 3 (Slots 13..18): [13] LFO3 Wave (list), [14] LFO3 Shape (custom graph), [15] LFO3 Freq,
---                           [16] LFO4 Wave (list), [17] LFO4 Shape (custom graph), [18] LFO4 Freq
---     Row 4 (Slots 19..24): [19] LFO3 KeySync,     [20] LFO3 FadeIn,               [21] LFO3 Offset,
---                           [22] LFO4 KeySync,     [23] LFO4 FadeIn,               [24] LFO4 Offset
---   Control Set 3 (Rows 5-6, Slots 25..34):
---     Slot 25:        [25] LFO SELECT (LFO 1 / LFO 2 / LFO 3 / LFO 4)
---     Slots 26..34:   [26] MIDI Sync (OFF/ON), [27] Sync Base (0..7), [28] Sync Time (1..16),
---                     [29] Freq Mod1 Src,      [30] Freq Mod1 Int,    [31] Freq Mod2 Src,
---                     [32] Freq Mod2 Int,      [33] Amp Mod Src,      [34] Amp Mod Int
+
 
 local DEVICE_ID = 1
-
-local function getGlobalChannel()
-    local dev = preset.getDevice(DEVICE_ID)
-    if dev then
-        return (dev:getChannel() - 1) & 0x0F
-    end
-    return 0
-end
-
--- ============================================================================
--- 1. Overlays & Enumerations
--- ============================================================================
-
--- [*3]: Z1 LFO Wave Form (18 wave shapes, 0..17)
-LFO_WAVES = {
-    { value = 0,  label = "Triangle 0" },
-    { value = 1,  label = "Triangle 90" },
-    { value = 2,  label = "Tri Random" },
-    { value = 3,  label = "Sine" },
-    { value = 4,  label = "Saw Up 0" },
-    { value = 5,  label = "Saw Up 180" },
-    { value = 6,  label = "Saw Down 0" },
-    { value = 7,  label = "Saw Down 180" },
-    { value = 8,  label = "Square" },
-    { value = 9,  label = "Random S/H" },
-    { value = 10, label = "Random Vect" },
-    { value = 11, label = "Step Tri 4" },
-    { value = 12, label = "Step Tri 6" },
-    { value = 13, label = "Step Saw 4" },
-    { value = 14, label = "Step Saw 6" },
-    { value = 15, label = "Exp Triangle" },
-    { value = 16, label = "Exp Saw Up" },
-    { value = 17, label = "Exp Saw Down" },
-}
 
 local OV = {
     LFO_WAVE   = 1,
@@ -5509,101 +5345,56 @@ local OV = {
     LFO_SELECT = 5,
 }
 
-local ENUM_DEFS = {
-    [OV.LFO_WAVE] = LFO_WAVES,
-    [OV.MODSRC1]  = MODSRC1,
-    [OV.KEY_SYNC] = {
-        { value = 0, label = "OFF" },
-        { value = 1, label = "by TIMBRE" },
-        { value = 2, label = "by VOICE" },
-    },
-    [OV.SYNC_BASE] = {
-        { value = 0, label = "32nd" },
-        { value = 1, label = "16th Tri" },
-        { value = 2, label = "16th" },
-        { value = 3, label = "8th Tri" },
-        { value = 4, label = "8th" },
-        { value = 5, label = "4th Tri" },
-        { value = 6, label = "4th" },
-        { value = 7, label = "2nd" },
-    },
-    [OV.LFO_SELECT] = {
-        { value = 0, label = "LFO 1" },
-        { value = 1, label = "LFO 2" },
-        { value = 2, label = "LFO 3" },
-        { value = 3, label = "LFO 4" },
-    },
-}
-
--- ============================================================================
--- 2. Z1 LFO Parameter Mapping (PROG_PRM.TXT IDs 107..162, ExID = 0)
--- ============================================================================
--- Each LFO has 14 parameters (stride = 14 bytes/IDs):
---   +0:  Wave Form (0..17)
---   +1:  Key Sync SW (0..2)
---   +2:  Frequency (0..199)
---   +3:  Frequency Mod1 Source (0..48)
---   +4:  Frequency Mod1 Int (-99..+99)
---   +5:  Frequency Mod2 Source (0..48)
---   +6:  Frequency Mod2 Int (-99..+99)
---   +7:  Fade In (0..99)
---   +8:  Amplitude Mod Source (0..48)
---   +9:  Amplitude Mod Int (-99..+99)
---   +10: Offset (-50..+50)
---   +11: MIDI Sync (0/1)
---   +12: MIDI Sync Base (0..7)
---   +13: MIDI Sync Time (0..15 -> 1..16)
+local ENUM_DEFS = {}
 
 LFO_BASE = {
-    [1] = 107, -- LFO1: 107..120
-    [2] = 121, -- LFO2: 121..134
-    [3] = 135, -- LFO3: 135..148
-    [4] = 149, -- LFO4: 149..162
+    [1] = 107,
+    [2] = 121,
+    [3] = 135,
+    [4] = 149,
 }
 
--- Live state for each of the 4 LFOs (used by the custom waveform graph widgets & bottom section)
 lfoState = {}
 for i = 1, 4 do
     lfoState[i] = {
-        wave   = 0,  -- 0..17
-        syncSw = 0,  -- 0..2
-        freq   = 50, -- 0..199
-        fade   = 0,  -- 0..99
-        offset = 0,  -- -50..+50
-        -- Bottom section per-LFO saved values (controls 26..34):
-        [26] = 0, -- MIDI Sync (0/1)
-        [27] = 3, -- MIDI Sync Base (0..7, default 8th Tri)
-        [28] = 0, -- MIDI Sync Time (0..15 -> 1..16)
-        [29] = 0, -- Freq Mod1 Source
-        [30] = 0, -- Freq Mod1 Int
-        [31] = 0, -- Freq Mod2 Source
-        [32] = 0, -- Freq Mod2 Int
-        [33] = 0, -- Amp Mod Source
-        [34] = 0, -- Amp Mod Int
+        wave   = 0,
+        syncSw = 0,
+        freq   = 50,
+        fade   = 0,
+        offset = 0,
+
+        [26] = 0,
+        [27] = 3,
+        [28] = 0,
+        [29] = 0,
+        [30] = 0,
+        [31] = 0,
+        [32] = 0,
+        [33] = 0,
+        [34] = 0,
     }
 end
 
--- Map static top/middle controls to (lfoIndex, paramOffset, stateField, kind, ov)
 local STATIC_LFO_CTRL = {
-    -- LFO 1 (Slots 1, 2[custom], 3, 7, 8, 9)
+
     [1]  = { lfo = 1, off = 0,  field = "wave",   kind = "list", ov = OV.LFO_WAVE },
     [3]  = { lfo = 1, off = 2,  field = "freq",   kind = "num" },
     [7]  = { lfo = 1, off = 1,  field = "syncSw", kind = "list", ov = OV.KEY_SYNC },
     [8]  = { lfo = 1, off = 7,  field = "fade",   kind = "num" },
     [9]  = { lfo = 1, off = 10, field = "offset", kind = "num" },
-    -- LFO 2 (Slots 4, 5[custom], 6, 10, 11, 12)
+
     [4]  = { lfo = 2, off = 0,  field = "wave",   kind = "list", ov = OV.LFO_WAVE },
     [6]  = { lfo = 2, off = 2,  field = "freq",   kind = "num" },
     [10] = { lfo = 2, off = 1,  field = "syncSw", kind = "list", ov = OV.KEY_SYNC },
     [11] = { lfo = 2, off = 7,  field = "fade",   kind = "num" },
     [12] = { lfo = 2, off = 10, field = "offset", kind = "num" },
-    -- LFO 3 (Slots 13, 14[custom], 15, 19, 20, 21)
+
     [13] = { lfo = 3, off = 0,  field = "wave",   kind = "list", ov = OV.LFO_WAVE },
     [15] = { lfo = 3, off = 2,  field = "freq",   kind = "num" },
     [19] = { lfo = 3, off = 1,  field = "syncSw", kind = "list", ov = OV.KEY_SYNC },
     [20] = { lfo = 3, off = 7,  field = "fade",   kind = "num" },
     [21] = { lfo = 3, off = 10, field = "offset", kind = "num" },
-    -- LFO 4 (Slots 16, 17[custom], 18, 22, 23, 24)
+
     [16] = { lfo = 4, off = 0,  field = "wave",   kind = "list", ov = OV.LFO_WAVE },
     [18] = { lfo = 4, off = 2,  field = "freq",   kind = "num" },
     [22] = { lfo = 4, off = 1,  field = "syncSw", kind = "list", ov = OV.KEY_SYNC },
@@ -5611,10 +5402,8 @@ local STATIC_LFO_CTRL = {
     [24] = { lfo = 4, off = 10, field = "offset", kind = "num" },
 }
 
--- Custom waveform widget control IDs for LFO 1..4
 local SHAPE_CTRL_ID = { [1] = 2, [2] = 5, [3] = 14, [4] = 17 }
 
--- Bottom section dynamic controls (26..34) mapped to parameter offset from LFO_BASE[selectedLfo]
 local DYN_LFO_DEFS = {
     [26] = { off = 11, short = "MIDI Sync", kind = "num",  defVal = 0 },
     [27] = { off = 12, short = "Sync Base", kind = "list", ov = OV.SYNC_BASE, defVal = 3 },
@@ -5627,68 +5416,63 @@ local DYN_LFO_DEFS = {
     [34] = { off = 9,  short = "Amp Int",   kind = "num",  defVal = 0 },
 }
 
-local selectedLfo = 1 -- 1..4 (LFO1..LFO4)
+local selectedLfo = 1
 
 function fmtPlus1(valueObject, value)
     return tostring(math.floor(value) + 1)
 end
 
--- ============================================================================
--- 3. Custom LFO Waveform Visualizer Widget (inspired by electraone-widgets)
--- ============================================================================
-
 local S_H_STEPS = { 0.65, -0.45, 0.80, -0.75, 0.25, -0.20, 0.55, -0.65 }
 
--- Compute normalized sample in [-1.0, +1.0] for Z1 LFO wave (0..17) at phase t in [0, 1)
 function evalZ1Wave(wave, t)
-    if wave == 0 then -- Triangle 0
+    if wave == 0 then
         if t < 0.25 then return t * 4
         elseif t < 0.75 then return 2 - t * 4
         else return t * 4 - 4 end
-    elseif wave == 1 then -- Triangle 90
+    elseif wave == 1 then
         return 1 - math.abs(t * 2 - 1) * 2
-    elseif wave == 2 then -- Tri Random
+    elseif wave == 2 then
         local peak = (t < 0.5) and 0.85 or 0.45
         if t < 0.25 then return (t * 4) * peak
         elseif t < 0.75 then return (2 - t * 4) * peak
         else return (t * 4 - 4) * peak end
-    elseif wave == 3 then -- Sine
+    elseif wave == 3 then
         return math.sin(t * 2 * math.pi)
-    elseif wave == 4 then -- Saw Up 0
+    elseif wave == 4 then
         return ((t + 0.5) % 1.0) * 2 - 1
-    elseif wave == 5 then -- Saw Up 180
+    elseif wave == 5 then
         return t * 2 - 1
-    elseif wave == 6 then -- Saw Down 0
+    elseif wave == 6 then
         return 1 - ((t + 0.5) % 1.0) * 2
-    elseif wave == 7 then -- Saw Down 180
+    elseif wave == 7 then
         return 1 - t * 2
-    elseif wave == 8 then -- Square
+    elseif wave == 8 then
         return (t < 0.5) and 1.0 or -1.0
-    elseif wave == 9 then -- Random S/H
+    elseif wave == 9 then
         local idx = math.floor(t * 8) + 1
         return S_H_STEPS[idx] or 0
-    elseif wave == 10 then -- Random Vector
+    elseif wave == 10 then
         local pos = t * 6
         local idx = math.floor(pos) + 1
         local frac = pos - math.floor(pos)
         local a = S_H_STEPS[idx] or 0
         local b = S_H_STEPS[(idx % 6) + 1] or 0
         return a + (b - a) * frac
-    elseif wave == 11 or wave == 12 then -- Step Tri 4 / 6
+    elseif wave == 11 or wave == 12 then
         local steps = (wave == 11) and 4 or 6
         local raw = 1 - math.abs(t * 2 - 1) * 2
         return math.floor(raw * steps + 0.5) / steps
-    elseif wave == 13 or wave == 14 then -- Step Saw 4 / 6
+    elseif wave == 13 or wave == 14 then
         local steps = (wave == 13) and 4 or 6
         local raw = t * 2 - 1
         return math.floor(raw * steps + 0.5) / steps
-    elseif wave == 15 then -- Exp Triangle
+    elseif wave == 15 then
         local raw = 1 - math.abs(t * 2 - 1) * 2
         local sign = (raw >= 0) and 1 or -1
         return sign * (math.abs(raw) ^ 2.2)
-    elseif wave == 16 then -- Exp Saw Up
+    elseif wave == 16 then
         return (t ^ 2.4) * 2 - 1
-    elseif wave == 17 then -- Exp Saw Down
+    elseif wave == 17 then
         return 1 - (t ^ 2.4) * 2
     end
     return 0
@@ -5701,7 +5485,6 @@ local function makeWavePainter(lfoIdx)
         local h = b[HEIGHT]
         local st = lfoState[lfoIdx]
 
-        -- Card outline & subtle zero-line ( accounting for LFO Offset -50..+50 )
         graphics.setColor(0x1E2631)
         graphics.fillRoundRect(0, 0, w, h, 4)
         graphics.setColor(0x3B4B5E)
@@ -5712,11 +5495,9 @@ local function makeWavePainter(lfoIdx)
         local mid = (top + bot) // 2
         local amp = (bot - top) / 2
 
-        -- Zero midline
         graphics.setColor(0x4A5A6A)
         graphics.drawLine(4, mid, w - 5, mid)
 
-        -- Waveform trace (with Fade-In envelope and DC Offset preview)
         local traceColor = (selectedLfo == lfoIdx) and ORANGE or BLUE
         graphics.setColor(traceColor)
 
@@ -5738,8 +5519,8 @@ local function makeWavePainter(lfoIdx)
             lastX, lastY = sx, sy
         end
 
-        -- Header label: "LFO1: Sine"
-        local wName = (LFO_WAVES[st.wave + 1] and LFO_WAVES[st.wave + 1].label) or "Wave"
+        local ov = overlays.get(OV.LFO_WAVE)
+        local wName = (ov and ov.getLabelByIndex and ov:getLabelByIndex(st.wave)) or "Wave"
         graphics.setColor(WHITE)
         graphics.print(5, 2, string.format("LFO%d %s", lfoIdx, wName), w - 10, LEFT, REGULAR, SMALL)
     end
@@ -5754,25 +5535,6 @@ local function repaintAllShapes()
     end
 end
 
--- ============================================================================
--- 4. SysEx Builder & Sender
--- ============================================================================
-
-local function sendParamChange(exId, paramId, signedVal)
-    local dev = preset.getDevice(DEVICE_ID)
-    local body = buildParamChangeBody(exId, paramId, signedVal)
-    if dev then
-        dev:sendSysex(body)
-    else
-        midi.sendSysex(PORT_1, body)
-    end
-end
-
--- ============================================================================
--- 5. Control Callbacks
--- ============================================================================
-
--- Callback for static LFO 1..4 controls (Wave, KeySync, Freq, FadeIn, Offset)
 function onStaticLfo(valueObject, value)
     local ctrlId = __LID(valueObject:getControl():getId())
     local spec = STATIC_LFO_CTRL[ctrlId]
@@ -5796,7 +5558,6 @@ function onStaticLfo(valueObject, value)
     sendParamChange(0, paramId, z1Val)
 end
 
--- Update bottom-section (Control Set 3) controls 26..34 for selectedLfo
 function updateLfoModControls()
     local prefix = "LFO" .. selectedLfo .. " "
     local st = lfoState[selectedLfo]
@@ -5819,7 +5580,6 @@ function updateLfoModControls()
     window.resume()
 end
 
--- Callback for Control 25: LFO Selector (0..3 -> LFO 1..4)
 function onLfoSelect(valueObject, value)
     local newLfo = math.floor(value) + 1
     if newLfo < 1 or newLfo > 4 or newLfo == selectedLfo then
@@ -5830,7 +5590,6 @@ function onLfoSelect(valueObject, value)
     info.setText("Editing LFO " .. selectedLfo .. " Mod/Sync")
 end
 
--- Callback for Bottom Section Dynamic Controls (26..34: MIDI Sync & Modulation for selectedLfo)
 function onDynLfo(valueObject, value)
     local ctrlId = __LID(valueObject:getControl():getId())
     local def = DYN_LFO_DEFS[ctrlId]
@@ -5851,10 +5610,6 @@ function onDynLfo(valueObject, value)
     sendParamChange(0, paramId, z1Val)
 end
 
--- ============================================================================
--- 6. Lifecycle Hooks
--- ============================================================================
-
 function preset.onLoad()
     for ovId, items in pairs(ENUM_DEFS) do
         overlays.create(ovId, items)
@@ -5863,7 +5618,7 @@ function preset.onLoad()
         local c = preset.getControl(SHAPE_CTRL_ID[i])
         if c then
             c:setPaintCallback(makeWavePainter(i))
-            -- Touching a custom LFO graph selects that LFO in the bottom Mod/Sync section!
+
             c:setTouchCallback(function(self, event)
                 if event.type == CLICK and selectedLfo ~= i then
                     controls.get(25):getValue("value"):setValue(i - 1)
@@ -5940,8 +5695,8 @@ end
 
 do
     local env = __makeEnv("z1-lfo",
-        {[1]=430,[2]=431,[3]=432,[4]=433,[5]=434,[6]=435,[7]=436,[8]=437,[9]=438,[10]=439,[11]=440,[12]=441,[13]=442,[14]=443,[15]=444,[16]=445,[17]=446,[18]=447,[19]=448,[20]=449,[21]=450,[22]=451,[23]=452,[24]=453,[25]=454,[26]=455,[27]=456,[28]=457,[29]=458,[30]=459,[31]=460,[32]=461,[33]=462,[34]=463,[50]=427,[51]=428,[52]=429},
-        {[1]=34,[2]=20,[3]=35,[4]=37,[5]=36},
+        {[1]=501,[2]=502,[3]=503,[4]=504,[5]=505,[6]=506,[7]=507,[8]=508,[9]=509,[10]=510,[11]=511,[12]=512,[13]=513,[14]=514,[15]=515,[16]=516,[17]=517,[18]=518,[19]=519,[20]=520,[21]=521,[22]=522,[23]=523,[24]=524,[25]=525,[26]=526,[27]=527,[28]=528,[29]=529,[30]=530,[31]=531,[32]=532,[33]=533,[34]=534,[50]=498,[51]=499,[52]=500},
+        {[1]=52,[2]=21,[3]=53,[4]=55,[5]=54},
         {[1]=11})
     local ok, err = pcall(__module_z1_lfo, env)
     if not ok then print("Z1 merged: error loading z1-lfo: " .. tostring(err)) end
@@ -5957,77 +5712,9 @@ end
 -- module z1-fx  (prefix fx_)
 -- ==========================================================================
 local function __module_z1_fx(_ENV)
--- Korg Z1 - FX1, FX2, Master FX, 2-Band EQ & FX Preset Manager for Electra One mk2
--- Covers:
---   [Effect Send & Selects] (IDs 356..361, ExID = 0)
---   [2-Band EQ]             (IDs 362..365, ExID = 0)
---   [Effect 1 Parameters]   (IDs 800..1003, ExID = 3, 15 algorithms)
---   [Effect 2 Parameters]   (IDs 800..951,  ExID = 4, 11 algorithms)
---   [Master FX Parameters]  (IDs 1004..1039, ExID = 5, 3 algorithms)
---   [FX Preset Save/Recall] (Per-FX and Full FX-Chain presets via persist/recall & in-memory slots)
---
--- Layout (32 controls across 3 Control Sets):
---   Control Set 1 (Rows 1-2, Slots 1..12):
---     Row 1 (Slots 1..6):  [11] EDIT FX (FX1/FX2/MFX), [1] FX1 Select (359), [2] FX2 Select (360),
---                          [3] MFX Select (361),       [4] FX Send (356),    [5] Send ModSrc (357)
---     Row 2 (Slots 7..12): [6] Send ModInt (358),      [7] EQ LoFreq (362),  [8] EQ LoGain (363),
---                          [9] EQ HiFreq (364),        [10] EQ HiGain (365), [12] FX PRESET (Save/Recall)
---   Control Set 2 & 3 (Rows 3-6, Dynamic Slots 1..20 -> Faders 101..120 / Lists 201..220):
---     Up to 20 parameters for the active FX1 (ExID 3), FX2 (ExID 4), or Master FX (ExID 5) algorithm.
+
 
 local DEVICE_ID = 1
-
-local function getGlobalChannel()
-    local dev = preset.getDevice(DEVICE_ID)
-    if dev then
-        return (dev:getChannel() - 1) & 0x0F
-    end
-    return 0
-end
-
--- ============================================================================
--- 1. Overlays & Enumerations (MODSRC1 & Non-Contiguous MODSRC2)
--- ============================================================================
-
--- Modulation Source List 2 (36 entries: 0 and 11..45 non-contiguous, used by all FX parameters)
-
-FX1_TYPES = {
-    { value = 0,  label = "Overdrive" },
-    { value = 1,  label = "Compressor" },
-    { value = 2,  label = "4 Band PEQ" },
-    { value = 3,  label = "Wah" },
-    { value = 4,  label = "Exciter" },
-    { value = 5,  label = "Decimator" },
-    { value = 6,  label = "Chorus" },
-    { value = 7,  label = "Flanger" },
-    { value = 8,  label = "Phaser" },
-    { value = 9,  label = "Small Rotary" },
-    { value = 10, label = "Delay (Mono)" },
-    { value = 11, label = "Talking Mod" },
-    { value = 12, label = "Multitap Dly" },
-    { value = 13, label = "Ensemble" },
-    { value = 14, label = "Rotary Spkr" },
-}
-
-FX2_TYPES = {
-    { value = 0,  label = "Overdrive" },
-    { value = 1,  label = "Compressor" },
-    { value = 2,  label = "4 Band PEQ" },
-    { value = 3,  label = "Wah" },
-    { value = 4,  label = "Exciter" },
-    { value = 5,  label = "Decimator" },
-    { value = 6,  label = "Chorus" },
-    { value = 7,  label = "Flanger" },
-    { value = 8,  label = "Phaser" },
-    { value = 9,  label = "Small Rotary" },
-    { value = 10, label = "Delay (Mono)" },
-}
-
-MFX_TYPES = {
-    { value = 0, label = "Stereo Delay" },
-    { value = 1, label = "Reverb-Hall" },
-    { value = 2, label = "Reverb-Room" },
-}
 
 local OV = {
     FX1_TYPE    = 1,
@@ -6036,7 +5723,7 @@ local OV = {
     MODSRC1     = 4,
     MODSRC2     = 5,
     EDIT_UNIT   = 6,
-    PRESET_ACT  = 7,
+    PRESET_TGT  = 7,
     OD_MODE     = 10,
     EQ_TYPE     = 11,
     SWEEP_MODE  = 12,
@@ -6053,75 +5740,14 @@ local OV = {
     STDLY_TYPE  = 23,
 }
 
-local ENUM_DEFS = {
-    [OV.FX1_TYPE]  = FX1_TYPES,
-    [OV.FX2_TYPE]  = FX2_TYPES,
-    [OV.MFX_TYPE]  = MFX_TYPES,
-    [OV.MODSRC1]   = MODSRC1,
-    [OV.MODSRC2]   = MODSRC2,
-    [OV.EDIT_UNIT] = {
-        { value = 0, label = "Edit FX 1" },
-        { value = 1, label = "Edit FX 2" },
-        { value = 2, label = "Edit MasterFX" },
-    },
-    [OV.PRESET_ACT] = {
-        { value = 0, label = "Live Edit" },
-        { value = 1, label = "Load Unit P1" },
-        { value = 2, label = "Load Unit P2" },
-        { value = 3, label = "Save Unit P1" },
-        { value = 4, label = "Save Unit P2" },
-        { value = 5, label = "Load Chain 1" },
-        { value = 6, label = "Save Chain 1" },
-    },
-    [OV.OD_MODE]    = { { value = 0, label = "OVERDRIVE" }, { value = 1, label = "DISTORTION" } },
-    [OV.EQ_TYPE]    = { { value = 0, label = "PEAKING" },   { value = 1, label = "SHELVING" } },
-    [OV.SWEEP_MODE] = { { value = 0, label = "AUTO" },      { value = 1, label = "MOD SOURCE" } },
-    [OV.WAH_FLT]    = { { value = 0, label = "BPF" },       { value = 1, label = "LPF" } },
-    [OV.OFF_ON]     = { { value = 0, label = "OFF" },       { value = 1, label = "ON" } },
-    [OV.TRI_SIN]    = { { value = 0, label = "TRIANGLE" },  { value = 1, label = "SINE" } },
-    [OV.SYNC_BASE]  = {
-        { value = 0, label = "32nd" }, { value = 1, label = "16th Tri" },
-        { value = 2, label = "16th" }, { value = 3, label = "8th Tri" },
-        { value = 4, label = "8th" },  { value = 5, label = "4th Tri" },
-        { value = 6, label = "4th" },  { value = 7, label = "2nd" },
-    },
-    [OV.OUT_PHASE]  = { { value = 0, label = "NORMAL (+)" }, { value = 1, label = "INVERT (-)" }, { value = 2, label = "STEREO (+-)" } },
-    [OV.SLOW_FAST]  = { { value = 0, label = "SLOW" },       { value = 1, label = "FAST" } },
-    [OV.TALK_MODE]  = { { value = 0, label = "MANUAL" },     { value = 1, label = "MOD SOURCE" } },
-    [OV.VOWEL]      = {
-        { value = 0, label = "A" }, { value = 1, label = "I" }, { value = 2, label = "U" },
-        { value = 3, label = "E" }, { value = 4, label = "O" },
-    },
-    [OV.MTAP_TYPE]  = {
-        { value = 0, label = "Normal" }, { value = 1, label = "Cross 1" }, { value = 2, label = "Cross 2" },
-        { value = 3, label = "Pan 1" },  { value = 4, label = "Pan 2" },
-    },
-    [OV.ROT_MODE]   = { { value = 0, label = "ROTATE" }, { value = 1, label = "STOP" } },
-    [OV.STDLY_TYPE] = { { value = 0, label = "STEREO" }, { value = 1, label = "CROSS" } },
-}
-
-local function num(id, name, min, max, fmt, color)
-    return { id = id, name = name, kind = "num", min = min, max = max, fmt = fmt, color = color or WHITE }
-end
-
-local function lst(id, name, ov, color)
-    return { id = id, name = name, kind = "list", ov = ov, color = color or PURPLE }
-end
+local ENUM_DEFS = {}
 
 local function mod2(id, name)
     return lst(id, name, OV.MODSRC2, BLUE)
 end
 
-local function mint(id, name, min, max, fmt)
-    return num(id, name, min or -99, max or 99, fmt, GREEN)
-end
-
--- ============================================================================
--- 2. All 15 FX1/FX2 Algorithms (IDs 800..1003) & 3 Master FX Algorithms (IDs 1004..1039)
--- ============================================================================
-
 FX12_MODELS = {
-    -- 0: Over Drive (19 params, IDs 800..818)
+
     [0] = {
         lst(800,  "OD Mode",       OV.OD_MODE, ORANGE),
         num(801,  "Drive",         0, 99, nil, RED),
@@ -6143,7 +5769,7 @@ FX12_MODELS = {
         mod2(817, "Bal ModSrc"),
         mint(818, "Bal ModInt"),
     },
-    -- 1: Compressor (9 params, IDs 819..827)
+
     [1] = {
         num(819,  "Sensitivity",   1, 99, nil, RED),
         num(820,  "Attack",        1, 99, nil, ORANGE),
@@ -6155,7 +5781,7 @@ FX12_MODELS = {
         mod2(826, "Bal ModSrc"),
         mint(827, "Bal ModInt"),
     },
-    -- 2: 4 Band PEQ (20 params, IDs 828..847)
+
     [2] = {
         num(828,  "Input Trim",    0, 99),
         lst(829,  "LoEQ Type",     OV.EQ_TYPE, PURPLE),
@@ -6178,7 +5804,7 @@ FX12_MODELS = {
         mod2(846, "Bal ModSrc"),
         mint(847, "Bal ModInt"),
     },
-    -- 3: Wah (12 params, IDs 848..859)
+
     [3] = {
         num(848,  "Freq Bottom",   0, 99, nil, ORANGE),
         num(849,  "Freq Top",      0, 99, nil, ORANGE),
@@ -6193,7 +5819,7 @@ FX12_MODELS = {
         mod2(858, "Bal ModSrc"),
         mint(859, "Bal ModInt"),
     },
-    -- 4: Exciter (12 params, IDs 860..871)
+
     [4] = {
         num(860,  "Blend",         -99, 99, nil, RED),
         mod2(861, "Blend Src"),
@@ -6208,7 +5834,7 @@ FX12_MODELS = {
         mod2(870, "Bal ModSrc"),
         mint(871, "Bal ModInt"),
     },
-    -- 5: Decimator (10 params, IDs 872..881)
+
     [5] = {
         lst(872,  "Pre LPF",       OV.OFF_ON, PURPLE),
         num(873,  "Sample Freq",   5, 120, nil, ORANGE),
@@ -6221,7 +5847,7 @@ FX12_MODELS = {
         mod2(880, "Bal ModSrc"),
         mint(881, "Bal ModInt"),
     },
-    -- 6: Chorus (18 params, IDs 882..899)
+
     [6] = {
         num(882,  "Delay Time",    0, 140, nil, ORANGE),
         lst(883,  "LFO Wave",      OV.TRI_SIN, PURPLE),
@@ -6242,7 +5868,7 @@ FX12_MODELS = {
         mod2(898, "Bal ModSrc"),
         mint(899, "Bal ModInt"),
     },
-    -- 7: Flanger (16 params, IDs 900..915)
+
     [7] = {
         num(900,  "Delay Time",    0, 140, nil, ORANGE),
         lst(901,  "LFO Wave",      OV.TRI_SIN, PURPLE),
@@ -6261,7 +5887,7 @@ FX12_MODELS = {
         mod2(914, "Bal ModSrc"),
         mint(915, "Bal ModInt"),
     },
-    -- 8: Phaser (16 params, IDs 916..931)
+
     [8] = {
         lst(916,  "LFO Wave",      OV.TRI_SIN, PURPLE),
         num(917,  "LFO Shape",     -99, 99, nil, ORANGE),
@@ -6280,7 +5906,7 @@ FX12_MODELS = {
         mod2(930, "Bal ModSrc"),
         mint(931, "Bal ModInt"),
     },
-    -- 9: Small Rotary SP (9 params, IDs 932..940)
+
     [9] = {
         lst(932,  "Speed",         OV.SLOW_FAST, ORANGE),
         mod2(933, "Speed SW"),
@@ -6292,7 +5918,7 @@ FX12_MODELS = {
         mod2(939, "Bal ModSrc"),
         mint(940, "Bal ModInt"),
     },
-    -- 10: Delay (11 params, IDs 941..951)
+
     [10] = {
         mod2(941, "InLvl Src"),
         mint(942, "InLvl Int"),
@@ -6306,7 +5932,7 @@ FX12_MODELS = {
         mod2(950, "Bal ModSrc"),
         mint(951, "Bal ModInt"),
     },
-    -- 11: Talking Modulator (11 params, IDs 952..962; FX1 only)
+
     [11] = {
         lst(952,  "Ctrl Mode",     OV.TALK_MODE, PURPLE),
         num(953,  "Manual Ctrl",   0, 99, nil, ORANGE),
@@ -6320,7 +5946,7 @@ FX12_MODELS = {
         mod2(961, "Bal ModSrc"),
         mint(962, "Bal ModInt"),
     },
-    -- 12: Multitap Delay (17 params, IDs 963..979; FX1 only)
+
     [12] = {
         lst(963,  "Tap Type",      OV.MTAP_TYPE, PURPLE),
         mod2(964, "InLvl Src"),
@@ -6340,7 +5966,7 @@ FX12_MODELS = {
         mod2(978, "Bal ModSrc"),
         mint(979, "Bal ModInt"),
     },
-    -- 13: Ensemble (10 params, IDs 980..989; FX1 only)
+
     [13] = {
         num(980,  "Speed",         0, 99, nil, ORANGE),
         mod2(981, "Speed Src"),
@@ -6353,7 +5979,7 @@ FX12_MODELS = {
         mod2(988, "Bal ModSrc"),
         mint(989, "Bal ModInt"),
     },
-    -- 14: Rotary Speaker (14 params, IDs 990..1003; FX1 only)
+
     [14] = {
         lst(990,  "Speed",         OV.SLOW_FAST, ORANGE),
         mod2(991, "Speed SW"),
@@ -6373,7 +5999,7 @@ FX12_MODELS = {
 }
 
 MFX_MODELS = {
-    -- 0: Stereo Delay (14 params, IDs 1004..1017, ExID = 5)
+
     [0] = {
         lst(1004, "Delay Type",    OV.STDLY_TYPE, PURPLE),
         mod2(1005,"InLvl Src"),
@@ -6390,7 +6016,7 @@ MFX_MODELS = {
         mod2(1016,"Bal ModSrc"),
         mint(1017,"Bal ModInt"),
     },
-    -- 1: Reverb-Hall (10 params, IDs 1018..1027, ExID = 5)
+
     [1] = {
         num(1018, "Reverb Time",   1, 100, nil, ORANGE),
         num(1019, "Pre Delay",     0, 200, nil, ORANGE),
@@ -6403,7 +6029,7 @@ MFX_MODELS = {
         mod2(1026,"Bal ModSrc"),
         mint(1027,"Bal ModInt"),
     },
-    -- 2: Reverb-Room (12 params, IDs 1028..1039, ExID = 5)
+
     [2] = {
         num(1028, "Reverb Time",   1, 30, nil, ORANGE),
         num(1029, "Pre Delay",     0, 200, nil, ORANGE),
@@ -6420,10 +6046,6 @@ MFX_MODELS = {
     },
 }
 
--- ============================================================================
--- 3. State, FX Preset Bank & SysEx Sender
--- ============================================================================
-
 STATIC_FX_TOP = {
     [1]  = { id = 359, kind = "list", ov = OV.FX1_TYPE, unit = 0 },
     [2]  = { id = 360, kind = "list", ov = OV.FX2_TYPE, unit = 1 },
@@ -6437,52 +6059,51 @@ STATIC_FX_TOP = {
     [10] = { id = 365, kind = "num",  fmt = "dbhalf" },
 }
 
-fxUnitType = { [0] = 0, [1] = 0, [2] = 0 } -- Selected algorithm for FX1 (0..14), FX2 (0..10), MFX (0..2)
-activeEditUnit = 0 -- 0 = FX1 (ExID 3), 1 = FX2 (ExID 4), 2 = Master FX (ExID 5)
+fxTopZ1 = { [356] = 50, [357] = 0, [358] = 0, [362] = 10, [363] = 0, [364] = 20, [365] = 0 }
+
+fxUnitType = { [0] = 0, [1] = 0, [2] = 0 }
+activeEditUnit = 0
 local activeFxDefs = {}
 local suppressFxSlot = {}
+local suppressTop = false
 
--- Saved values per unit (0..2) and paramId
 fxSavedValues = { [0] = {}, [1] = {}, [2] = {} }
 
--- Persistent FX Preset Library (supports per-unit presets and full FX-chain presets)
-fxPresetBank = {
-    unit  = { [1] = {}, [2] = {} },
-    chain = { [1] = nil },
-}
+FX1_ONLY_TYPES = { [11] = true, [12] = true, [13] = true, [14] = true }
 
 function fmtDbHalf(_valueObject, value)
     return string.format("%+.1f dB", math.floor(value) * 0.5)
 end
 
 function fmtFxSlot(valueObject, value)
-    local slot = __LID(valueObject:getControl():getId()) % 100
-    local def = activeFxDefs[slot]
-    local v = math.floor(value)
-    if not def or not def.fmt then
-        return tostring(v)
-    end
-    if def.fmt == "dbhalf" then
-        return string.format("%+.1f dB", v * 0.5)
-    elseif def.fmt == "plus1" then
-        return tostring(v + 1)
-    end
-    return tostring(v)
+    local slot = __LID(valueObject:getControl():getId()) % 50
+    return formatSlotValue(activeFxDefs[slot], value)
 end
 
-local function sendParamChange(exId, paramId, signedVal)
-    local dev = preset.getDevice(DEVICE_ID)
-    local body = buildParamChangeBody(exId, paramId, signedVal)
-    if dev then
-        dev:sendSysex(body)
-    else
-        midi.sendSysex(PORT_1, body)
-    end
+local function setTopControl(ctrlId, z1Val)
+    local spec = STATIC_FX_TOP[ctrlId]
+    local c = controls.get(ctrlId)
+    if not spec or not c then return end
+    local disp = (spec.kind == "list") and z1ValToIdx(spec.ov, z1Val) or z1Val
+    suppressTop = true
+    c:getValue("value"):updateValue(disp)
+    suppressTop = false
 end
 
--- ============================================================================
--- 4. Dynamic FX Relayout & Callbacks
--- ============================================================================
+local function unitTypeLabel(unit, alg)
+    local ovId = (unit == 0 and OV.FX1_TYPE) or (unit == 1 and OV.FX2_TYPE) or OV.MFX_TYPE
+    local ov = overlays.get(ovId)
+    return (ov and ov.getLabelByIndex and ov:getLabelByIndex(alg or 0)) or "?"
+end
+
+function isFx2Available()
+    return not FX1_ONLY_TYPES[fxUnitType[0] or 0]
+end
+
+function updateFx2Visibility()
+    local c = controls.get(2)
+    if c then c:setVisible(isFx2Available()) end
+end
 
 local function getUnitDefs(unit)
     local alg = fxUnitType[unit] or 0
@@ -6495,72 +6116,49 @@ end
 local function getUnitTitle(unit)
     local alg = fxUnitType[unit] or 0
     if unit == 0 then
-        return "FX 1: " .. ((FX1_TYPES[alg + 1] and FX1_TYPES[alg + 1].label) or "FX1")
+        return "FX 1: " .. unitTypeLabel(0, alg)
     elseif unit == 1 then
-        return "FX 2: " .. ((FX2_TYPES[alg + 1] and FX2_TYPES[alg + 1].label) or "FX2")
+        if not isFx2Available() then
+            return "FX 2: N/A (FX1 = " .. unitTypeLabel(0, fxUnitType[0]) .. ")"
+        end
+        return "FX 2: " .. unitTypeLabel(1, alg)
     else
-        return "MASTER FX: " .. ((MFX_TYPES[alg + 1] and MFX_TYPES[alg + 1].label) or "MFX")
+        return "MASTER FX: " .. unitTypeLabel(2, alg)
     end
 end
 
 function applyFxLayout()
-    local defs = getUnitDefs(activeEditUnit)
+    if presetView then
+        showPresetManager()
+        return
+    end
+    local fx2Blocked = (activeEditUnit == 1) and not isFx2Available()
+    local defs = fx2Blocked and {} or getUnitDefs(activeEditUnit)
     activeFxDefs = {}
     suppressFxSlot = {}
 
     window.stop()
+    setPresetControlsVisible(false)
     local title = getUnitTitle(activeEditUnit)
     local grp2 = preset.getGroup(51)
     local grp3 = preset.getGroup(52)
-    if grp2 then grp2:setLabel(title .. " PARAMETERS (1..12)") end
-    if grp3 then grp3:setLabel(title .. " PARAMETERS (13..20)") end
-
-    local saved = fxSavedValues[activeEditUnit]
-    for s = 1, 20 do
-        local def = defs[s]
-        local fader = controls.get(100 + s)
-        local list  = controls.get(200 + s)
-
-        if not def then
-            fader:setVisible(false)
-            list:setVisible(false)
-        elseif def.kind == "list" then
-            activeFxDefs[s] = def
-            fader:setVisible(false)
-
-            local initVal = saved[def.id] or 0
-            local vo = list:getValue("value")
-            vo:setOverlayId(__OV(def.ov))
-            suppressFxSlot[200 + s] = true
-            vo:updateValue(initVal)
-            suppressFxSlot[200 + s] = nil
-            list:setName(def.name)
-            list:setColor(def.color or PURPLE)
-            list:setVisible(true)
-        else
-            activeFxDefs[s] = def
-            list:setVisible(false)
-
-            local neutral = (def.min < 0 and def.max > 0) and 0 or def.min
-            local initVal = saved[def.id]
-            if initVal == nil then initVal = neutral end
-
-            local vo = fader:getValue("value")
-            local span = def.max - def.min
-            vo:getMessage():setRange(0, span)
-            vo:setRange(def.min, def.max, neutral, false)
-            suppressFxSlot[100 + s] = true
-            vo:updateValue(initVal)
-            suppressFxSlot[100 + s] = nil
-            fader:setName(def.name)
-            fader:setColor(def.color or WHITE)
-            fader:setVisible(true)
-        end
+    if fx2Blocked then
+        if grp2 then grp2:setLabel(title .. " - FX2 NOT USABLE WITH THIS FX1 TYPE") end
+        if grp3 then grp3:setLabel(title) end
+    else
+        if grp2 then grp2:setLabel(title .. " PARAMETERS (1..12)") end
+        if grp3 then grp3:setLabel(title .. " PARAMETERS (13..20)") end
     end
+    if grp3 then grp3:setVisible(true) end
+
+    applyDynamicSlots(defs, 1, 20, 0, 100, 200, activeFxDefs, fxSavedValues[activeEditUnit], nil, suppressFxSlot)
     window.resume()
 end
 
 function onStaticFxTop(valueObject, value)
+    if suppressTop then
+        return
+    end
     local ctrlId = __LID(valueObject:getControl():getId())
     local spec = STATIC_FX_TOP[ctrlId]
     if not spec then
@@ -6573,9 +6171,15 @@ function onStaticFxTop(valueObject, value)
         z1Val = (ov and ov:getValueByIndex(v)) or v
     end
 
+    if fxTopZ1[spec.id] ~= nil then
+        fxTopZ1[spec.id] = z1Val
+    end
     if spec.unit ~= nil then
         fxUnitType[spec.unit] = z1Val
-        if spec.unit == activeEditUnit then
+        if spec.unit == 0 then
+            updateFx2Visibility()
+        end
+        if spec.unit == activeEditUnit or (spec.unit == 0 and activeEditUnit == 1) or presetView then
             applyFxLayout()
         end
     end
@@ -6584,11 +6188,15 @@ end
 
 function onEditUnitSelect(_valueObject, value)
     local u = math.floor(value)
-    if u < 0 or u > 2 or u == activeEditUnit then
+    if u < 0 or u > 2 or (u == activeEditUnit and not presetView) then
         return
     end
     activeEditUnit = u
-    applyFxLayout()
+    if presetView then
+        setPresetView(false)
+    else
+        applyFxLayout()
+    end
     info.setText(getUnitTitle(activeEditUnit))
 end
 
@@ -6602,7 +6210,7 @@ function onFxSlot(valueObject, value)
     if not ctrl:isVisible() then
         return
     end
-    local s = ctrlId % 100
+    local s = ctrlId % 50
     local def = activeFxDefs[s]
     if not def then
         return
@@ -6617,92 +6225,436 @@ function onFxSlot(valueObject, value)
         z1Val = (ov and ov:getValueByIndex(rawVal)) or rawVal
     end
 
-    -- ExID: FX1 = 3, FX2 = 4, Master FX = 5
     local exId = activeEditUnit + 3
     sendParamChange(exId, def.id, z1Val)
 end
 
--- Save/Recall Per-Unit or Full-Chain FX Presets
-function onFxPresetAction(_valueObject, value)
-    local act = math.floor(value)
-    if act == 0 then
-        return
+UNIT_PRESET_SLOTS  = 8
+CHAIN_PRESET_SLOTS = 25
+PRESET_NAME_LEN    = 16
+
+CHAIN_TOP_IDS  = { 356, 357, 358, 362, 363, 364, 365 }
+CHAIN_TOP_CTRL = { 4, 5, 6, 7, 8, 9, 10 }
+
+PRESET_CTRL = {
+    TARGET = 301, SLOT = 302, LIST = 303, LOAD = 304, SAVE = 305,
+    NPOS = 306, NCHAR = 307, RENAME = 308, DELETE = 309,
+}
+
+fxLib = _G.z1PersistLib or { version = 2, unit = {}, chain = {}, tuning = {}, oscUnit = {}, oscDual = {} }
+_G.z1PersistLib = fxLib
+fxLib.unit = fxLib.unit or {}
+fxLib.chain = fxLib.chain or {}
+fxLib.tuning = fxLib.tuning or {}
+fxLib.oscUnit = fxLib.oscUnit or {}
+fxLib.oscDual = fxLib.oscDual or {}
+
+presetView    = false
+presetTarget  = 0
+presetSlot    = 1
+presetNamePos = 1
+presetName    = {}
+local suppressPreset = false
+local shownPresetBank = nil
+local pendingDelete = nil
+
+local function defaultRaw(def)
+    if def.kind == "list" then return 0 end
+    return (def.min < 0 and def.max > 0) and 0 or def.min
+end
+
+local function rawToZ1(def, raw)
+    if def.kind == "list" then
+        local ov = overlays.get(def.ov)
+        return (ov and ov:getValueByIndex(raw)) or raw
     end
-    local defs = getUnitDefs(activeEditUnit)
-    if act == 3 or act == 4 then
-        -- Save current active unit to slot 1 or 2
-        local pSlot = act - 2
-        local snap = { alg = fxUnitType[activeEditUnit], params = {} }
-        for _, d in ipairs(defs) do
-            snap.params[d.id] = fxSavedValues[activeEditUnit][d.id] or 0
-        end
-        fxPresetBank.unit[pSlot][activeEditUnit] = snap
-        if type(persist) == "function" then pcall(persist, fxPresetBank) end
-        info.setText("Saved Unit Preset " .. pSlot)
-    elseif act == 1 or act == 2 then
-        -- Recall active unit from slot 1 or 2
-        local pSlot = act
-        local snap = fxPresetBank.unit[pSlot][activeEditUnit]
-        if snap then
-            fxUnitType[activeEditUnit] = snap.alg
-            sendParamChange(0, 359 + activeEditUnit, snap.alg)
-            local exId = activeEditUnit + 3
-            for _, d in ipairs(getUnitDefs(activeEditUnit)) do
-                local rawVal = snap.params[d.id] or 0
-                fxSavedValues[activeEditUnit][d.id] = rawVal
-                local z1Val = rawVal
-                if d.kind == "list" then
-                    local ov = overlays.get(d.ov)
-                    z1Val = (ov and ov:getValueByIndex(rawVal)) or rawVal
-                end
-                sendParamChange(exId, d.id, z1Val)
-            end
-            applyFxLayout()
-            info.setText("Loaded Unit Preset " .. pSlot)
-        end
-    elseif act == 6 then
-        -- Save Full FX Chain (FX1 + FX2 + MFX)
-        local chain = { units = {} }
-        for u = 0, 2 do
-            local uSnap = { alg = fxUnitType[u], params = {} }
-            for _, d in ipairs(getUnitDefs(u)) do
-                uSnap.params[d.id] = fxSavedValues[u][d.id] or 0
-            end
-            chain.units[u] = uSnap
-        end
-        fxPresetBank.chain[1] = chain
-        if type(persist) == "function" then pcall(persist, fxPresetBank) end
-        info.setText("Saved FX Chain 1")
-    elseif act == 5 then
-        -- Load Full FX Chain 1
-        local chain = fxPresetBank.chain[1]
-        if chain and chain.units then
-            for u = 0, 2 do
-                local uSnap = chain.units[u]
-                if uSnap then
-                    fxUnitType[u] = uSnap.alg
-                    sendParamChange(0, 359 + u, uSnap.alg)
-                    for pid, rv in pairs(uSnap.params) do
-                        fxSavedValues[u][pid] = rv
-                    end
-                end
-            end
-            applyFxLayout()
-            info.setText("Loaded FX Chain 1")
+    return raw
+end
+
+local function z1ToRaw(def, z1)
+    if def.kind == "list" then
+        return z1ValToIdx(def.ov, z1)
+    end
+    return z1
+end
+
+local function presetBankKey()
+    if presetTarget == 3 then return "chain" end
+    if presetTarget == 2 then return "mfx" .. tostring(fxUnitType[2] or 0) end
+    return "fx" .. tostring(fxUnitType[presetTarget] or 0)
+end
+
+local function presetSlotCount()
+    return (presetTarget == 3) and CHAIN_PRESET_SLOTS or UNIT_PRESET_SLOTS
+end
+
+local function getPresetEntry(slot)
+    local key = "s" .. tostring(slot)
+    if presetTarget == 3 then
+        return fxLib.chain[key]
+    end
+    local bank = fxLib.unit[presetBankKey()]
+    return (type(bank) == "table") and bank[key] or nil
+end
+
+local function setPresetEntry(slot, entry)
+    local key = "s" .. tostring(slot)
+    if presetTarget == 3 then
+        fxLib.chain[key] = entry
+    else
+        local bk = presetBankKey()
+        if type(fxLib.unit[bk]) ~= "table" then fxLib.unit[bk] = {} end
+        fxLib.unit[bk][key] = entry
+    end
+end
+
+local function savePresetLibrary()
+    if type(persist) == "function" then
+        return (pcall(persist, fxLib))
+    end
+    return false
+end
+
+local function defaultPresetName(slot)
+    if presetTarget == 3 then
+        return string.format("Chain %02d", slot)
+    end
+    return string.format("%s %d", unitTypeLabel(presetTarget, fxUnitType[presetTarget]), slot)
+end
+
+local function setNameBuffer(str)
+    setNameCharsBuffer(presetName, str, 0x7E)
+end
+
+local function getNameBuffer()
+    return getProgramNameString(presetName, true)
+end
+
+local function presetHeader()
+    if presetTarget == 3 then
+        return string.format("FX CHAIN PRESETS (%d)", CHAIN_PRESET_SLOTS)
+    end
+    local unitName = ({ [0] = "FX1", [1] = "FX2", [2] = "MFX" })[presetTarget]
+    return string.format("%s %s PRESETS (%d)", unitName,
+        string.upper(unitTypeLabel(presetTarget, fxUnitType[presetTarget])), UNIT_PRESET_SLOTS)
+end
+
+local function captureUnitValues(unit)
+    local v = {}
+    for i, d in ipairs(getUnitDefs(unit)) do
+        local raw = fxSavedValues[unit][d.id]
+        if raw == nil then raw = defaultRaw(d) end
+        v[i] = rawToZ1(d, raw)
+    end
+    return v
+end
+
+local function applyUnitValues(unit, v)
+    local exId = unit + 3
+    for i, d in ipairs(getUnitDefs(unit)) do
+        local z1 = (type(v) == "table") and v[i] or nil
+        if type(z1) == "number" then
+            fxSavedValues[unit][d.id] = z1ToRaw(d, z1)
+            sendParamChange(exId, d.id, z1)
         end
     end
 end
 
--- ============================================================================
--- 5. Lifecycle Hooks
--- ============================================================================
+local function captureChain(name)
+    local top = {}
+    for i, id in ipairs(CHAIN_TOP_IDS) do
+        top[i] = fxTopZ1[id] or 0
+    end
+    return {
+        name = name,
+        sel  = { fxUnitType[0] or 0, fxUnitType[1] or 0, fxUnitType[2] or 0 },
+        top  = top,
+        u1   = captureUnitValues(0),
+        u2   = captureUnitValues(1),
+        u3   = captureUnitValues(2),
+    }
+end
+
+local function applyChain(e)
+    local units = { e.u1, e.u2, e.u3 }
+    for u = 0, 2 do
+        local alg = (type(e.sel) == "table") and e.sel[u + 1] or nil
+        if type(alg) == "number" then
+            fxUnitType[u] = alg
+            sendParamChange(0, 359 + u, alg)
+            setTopControl(u + 1, alg)
+            applyUnitValues(u, units[u + 1])
+        end
+    end
+    for i, id in ipairs(CHAIN_TOP_IDS) do
+        local z1 = (type(e.top) == "table") and e.top[i] or nil
+        if type(z1) == "number" then
+            fxTopZ1[id] = z1
+            sendParamChange(0, id, z1)
+            setTopControl(CHAIN_TOP_CTRL[i], z1)
+        end
+    end
+    updateFx2Visibility()
+end
+
+local function repaintPresetList()
+    local c = controls.get(PRESET_CTRL.LIST)
+    if c then c:repaint() end
+end
+
+local function syncNameChar()
+    local c = controls.get(PRESET_CTRL.NCHAR)
+    if c then
+        suppressPreset = true
+        c:getValue("value"):updateValue(presetName[presetNamePos] or 0x20)
+        suppressPreset = false
+    end
+end
+
+local function selectPresetSlot(slot)
+    local n = presetSlotCount()
+    presetSlot = math.max(1, math.min(n, slot))
+    pendingDelete = nil
+    local e = getPresetEntry(presetSlot)
+    setNameBuffer(e and e.name or defaultPresetName(presetSlot))
+    syncNameChar()
+    repaintPresetList()
+end
+
+function setPresetControlsVisible(on)
+    for _, cid in pairs(PRESET_CTRL) do
+        local c = controls.get(cid)
+        if c then c:setVisible(on) end
+    end
+end
+
+function showPresetManager()
+    window.stop()
+    for s = 1, 20 do
+        controls.get(100 + s):setVisible(false)
+        local tf = controls.get(150 + s)
+        if tf then tf:setVisible(false) end
+        controls.get(200 + s):setVisible(false)
+    end
+    local grp2 = preset.getGroup(51)
+    local grp3 = preset.getGroup(52)
+    if grp2 then grp2:setLabel("FX PRESET LIBRARY - " .. presetHeader()) end
+    if grp3 then grp3:setVisible(false) end
+    setPresetControlsVisible(true)
+
+    local n = presetSlotCount()
+    local slotCtrl = controls.get(PRESET_CTRL.SLOT)
+    if slotCtrl then
+        local vo = slotCtrl:getValue("value")
+        vo:getMessage():setRange(0, n - 1)
+        vo:setRange(1, n, 1, false)
+    end
+    local bank = presetBankKey()
+    if bank ~= shownPresetBank then
+        shownPresetBank = bank
+        selectPresetSlot(presetSlot)
+    end
+    if slotCtrl then
+        suppressPreset = true
+        slotCtrl:getValue("value"):updateValue(presetSlot)
+        suppressPreset = false
+    end
+    local tgt = controls.get(PRESET_CTRL.TARGET)
+    if tgt then
+        suppressPreset = true
+        tgt:getValue("value"):updateValue(presetTarget)
+        suppressPreset = false
+    end
+    syncNameChar()
+    repaintPresetList()
+    window.resume()
+end
+
+function setPresetView(on)
+    presetView = on and true or false
+    if presetView and presetTarget ~= 3 then
+        presetTarget = activeEditUnit
+    end
+    local pad = controls.get(12)
+    if pad then
+        suppressPreset = true
+        pad:getValue("value"):updateValue(presetView and 1 or 0)
+        suppressPreset = false
+    end
+    applyFxLayout()
+end
+
+function paintPresetList(control)
+    local b = control:getBounds()
+    local w, h = b[WIDTH], b[HEIGHT]
+    graphics.setColor(0x18202C)
+    graphics.fillRect(0, 0, w, h)
+    graphics.setColor(0x03A598)
+    graphics.drawRect(0, 0, w, h)
+
+    graphics.setColor(ORANGE)
+    graphics.print(6, 3, presetHeader(), w - 12, LEFT)
+
+    local chars = {}
+    for i = 1, PRESET_NAME_LEN do
+        local ch = string.char(presetName[i] or 0x20)
+        chars[i] = (i == presetNamePos) and ("[" .. ch .. "]") or ch
+    end
+    graphics.setColor(WHITE)
+    graphics.print(6, 21, "Name: " .. table.concat(chars), w - 12, LEFT)
+
+    local n = presetSlotCount()
+    local rows = 6
+    local first = math.max(1, math.min(presetSlot - 2, n - rows + 1))
+    for r = 0, rows - 1 do
+        local s = first + r
+        if s > n then break end
+        local y = 40 + r * 17
+        local e = getPresetEntry(s)
+        if s == presetSlot then
+            graphics.setColor(0x03A598)
+            graphics.fillRect(2, y - 1, w - 4, 17)
+            graphics.setColor(0x000000)
+        else
+            graphics.setColor(e and WHITE or 0x7A8290)
+        end
+        graphics.print(8, y, string.format("%02d  %s", s, e and e.name or "- empty -"), w - 16, LEFT)
+    end
+end
+
+function onFxPresetView(_valueObject, value)
+    if suppressPreset then return end
+    local on = math.floor(value) > 0
+    if on ~= presetView then
+        setPresetView(on)
+    end
+end
+
+function onPresetTarget(_valueObject, value)
+    if suppressPreset then return end
+    local t = math.max(0, math.min(3, math.floor(value)))
+    if t == presetTarget then return end
+    presetTarget = t
+    if presetView then showPresetManager() end
+    info.setText(presetHeader())
+end
+
+function onPresetSlot(_valueObject, value)
+    if suppressPreset then return end
+    selectPresetSlot(math.floor(value))
+end
+
+function fmtPresetSlot(_valueObject, value)
+    local s = math.floor(value)
+    local e = getPresetEntry(s)
+    return string.format("%02d %s", s, e and e.name or "<empty>")
+end
+
+function onNamePos(_valueObject, value)
+    presetNamePos = math.max(1, math.min(PRESET_NAME_LEN, math.floor(value)))
+    syncNameChar()
+    repaintPresetList()
+end
+
+function onNameChar(_valueObject, value)
+    if suppressPreset then return end
+    local c = math.max(0x20, math.min(0x7E, math.floor(value)))
+    presetName[presetNamePos] = c
+    repaintPresetList()
+end
+
+function onPresetLoad(_valueObject, value)
+    if math.floor(value) <= 0 then return end
+    pendingDelete = nil
+    local e = getPresetEntry(presetSlot)
+    if not e then
+        info.setText(string.format("Slot %02d is empty", presetSlot))
+        return
+    end
+    if presetTarget == 3 then
+        applyChain(e)
+    else
+        if presetTarget == 1 and not isFx2Available() then
+            info.setText("FX2 not usable with FX1 " .. unitTypeLabel(0, fxUnitType[0]))
+            return
+        end
+        applyUnitValues(presetTarget, e.v)
+    end
+    shownPresetBank = nil
+    applyFxLayout()
+    info.setText("Loaded: " .. tostring(e.name))
+end
+
+function onPresetSave(_valueObject, value)
+    if math.floor(value) <= 0 then return end
+    pendingDelete = nil
+    local name = getNameBuffer()
+    if name == "" then name = defaultPresetName(presetSlot) end
+    local entry
+    if presetTarget == 3 then
+        entry = captureChain(name)
+    else
+        entry = { name = name, v = captureUnitValues(presetTarget) }
+    end
+    setPresetEntry(presetSlot, entry)
+    local ok = savePresetLibrary()
+    repaintPresetList()
+    info.setText(string.format("Saved %02d: %s%s", presetSlot, name, ok and "" or " (RAM only)"))
+end
+
+function onPresetRename(_valueObject, value)
+    if math.floor(value) <= 0 then return end
+    pendingDelete = nil
+    local e = getPresetEntry(presetSlot)
+    if not e then
+        info.setText("Slot empty - use Save")
+        return
+    end
+    local name = getNameBuffer()
+    if name == "" then name = defaultPresetName(presetSlot) end
+    e.name = name
+    savePresetLibrary()
+    repaintPresetList()
+    info.setText("Renamed: " .. name)
+end
+
+function onPresetDelete(_valueObject, value)
+    if math.floor(value) <= 0 then return end
+    if not getPresetEntry(presetSlot) then
+        info.setText(string.format("Slot %02d is empty", presetSlot))
+        return
+    end
+    if pendingDelete ~= presetSlot then
+        pendingDelete = presetSlot
+        info.setText(string.format("Press DELETE again to clear %02d", presetSlot))
+        return
+    end
+    pendingDelete = nil
+    setPresetEntry(presetSlot, nil)
+    savePresetLibrary()
+    setNameBuffer(defaultPresetName(presetSlot))
+    syncNameChar()
+    repaintPresetList()
+    info.setText(string.format("Cleared slot %02d", presetSlot))
+end
 
 function preset.onLoad()
     for ovId, items in pairs(ENUM_DEFS) do
         overlays.create(ovId, items)
     end
     if type(recall) == "function" and (type(recallJson) ~= "function" or recallJson() ~= nil) then
-        pcall(recall, fxPresetBank)
+        local stored = {}
+        if pcall(recall, stored) and stored.version == 2 then
+            if type(stored.unit) == "table" then fxLib.unit = stored.unit end
+            if type(stored.chain) == "table" then fxLib.chain = stored.chain end
+            if type(stored.tuning) == "table" then fxLib.tuning = stored.tuning end
+            if type(stored.oscUnit) == "table" then fxLib.oscUnit = stored.oscUnit end
+            if type(stored.oscDual) == "table" then fxLib.oscDual = stored.oscDual end
+        end
+    end
+    local listCtrl = preset.getControl(PRESET_CTRL.LIST)
+    if listCtrl then
+        listCtrl:setPaintCallback(paintPresetList)
     end
 end
 
@@ -6713,41 +6665,30 @@ function preset.onReady()
         end
     end
     controls.get(11):getValue("value"):setOverlayId(__OV(OV.EDIT_UNIT))
-    controls.get(12):getValue("value"):setOverlayId(__OV(OV.PRESET_ACT))
+    controls.get(PRESET_CTRL.TARGET):getValue("value"):setOverlayId(__OV(OV.PRESET_TGT))
+    setNameBuffer(defaultPresetName(presetSlot))
+    updateFx2Visibility()
     applyFxLayout()
     info.setText("Z1 Effects Ready")
-end
-
-local function z1ValToIdx(ovId, z1Val)
-    if not ovId then return z1Val end
-    local ov = overlays.get(ovId)
-    if ov and ov.getIndexByValue then
-        local idx = ov:getIndexByValue(z1Val)
-        if idx ~= nil then return idx end
-    end
-    if ov and ov.getValueByIndex then
-        for i = 0, 63 do
-            local v = ov:getValueByIndex(i)
-            if v == nil then break end
-            if v == z1Val then return i end
-        end
-    end
-    return z1Val
 end
 
 function preset.onZ1Param(exId, paramId, z1Val)
     if exId == 0 then
         for cid, spec in pairs(STATIC_FX_TOP) do
             if spec.id == paramId then
-                local disp = (spec.kind == "list") and z1ValToIdx(spec.ov, z1Val) or z1Val
+                if fxTopZ1[paramId] ~= nil then
+                    fxTopZ1[paramId] = z1Val
+                end
                 if spec.unit ~= nil then
                     fxUnitType[spec.unit] = z1Val
-                    if spec.unit == activeEditUnit then
+                    if spec.unit == 0 then
+                        updateFx2Visibility()
+                    end
+                    if spec.unit == activeEditUnit or (spec.unit == 0 and activeEditUnit == 1) or presetView then
                         applyFxLayout()
                     end
                 end
-                local c = controls.get(cid)
-                if c then c:getValue("value"):updateValue(disp) end
+                setTopControl(cid, z1Val)
                 return
             end
         end
@@ -6773,12 +6714,13 @@ function preset.onZ1Dump(params)
     for cid, spec in pairs(STATIC_FX_TOP) do
         local z1Val = p0[spec.id]
         if z1Val ~= nil then
-            local disp = (spec.kind == "list") and z1ValToIdx(spec.ov, z1Val) or z1Val
+            if fxTopZ1[spec.id] ~= nil then
+                fxTopZ1[spec.id] = z1Val
+            end
             if spec.unit ~= nil then
                 fxUnitType[spec.unit] = z1Val
             end
-            local c = controls.get(cid)
-            if c then c:getValue("value"):updateValue(disp) end
+            setTopControl(cid, z1Val)
         end
     end
     for unit = 0, 2 do
@@ -6790,24 +6732,41 @@ function preset.onZ1Dump(params)
             end
         end
     end
+    updateFx2Visibility()
     applyFxLayout()
 end
 end
 
 do
     local env = __makeEnv("z1-fx",
-        {[1]=468,[2]=469,[3]=470,[4]=471,[5]=472,[6]=473,[7]=474,[8]=475,[9]=476,[10]=477,[11]=467,[12]=478,[50]=464,[51]=465,[52]=466,[101]=479,[102]=481,[103]=483,[104]=485,[105]=487,[106]=489,[107]=491,[108]=493,[109]=495,[110]=497,[111]=499,[112]=501,[113]=503,[114]=505,[115]=507,[116]=509,[117]=511,[118]=513,[119]=515,[120]=517,[201]=480,[202]=482,[203]=484,[204]=486,[205]=488,[206]=490,[207]=492,[208]=494,[209]=496,[210]=498,[211]=500,[212]=502,[213]=504,[214]=506,[215]=508,[216]=510,[217]=512,[218]=514,[219]=516,[220]=518},
-        {[1]=39,[2]=40,[3]=41,[4]=20,[5]=6,[6]=38,[7]=42,[10]=59,[11]=60,[12]=61,[13]=62,[14]=5,[15]=63,[16]=37,[17]=64,[18]=65,[19]=66,[20]=67,[21]=68,[22]=69,[23]=70},
+        {[1]=539,[2]=540,[3]=541,[4]=542,[5]=543,[6]=544,[7]=545,[8]=546,[9]=547,[10]=548,[11]=538,[12]=549,[50]=535,[51]=536,[52]=537,[101]=550,[102]=552,[103]=554,[104]=556,[105]=558,[106]=560,[107]=562,[108]=564,[109]=566,[110]=568,[111]=570,[112]=572,[113]=574,[114]=576,[115]=578,[116]=580,[117]=582,[118]=584,[119]=586,[120]=588,[152]=599,[153]=600,[154]=601,[155]=602,[156]=603,[157]=604,[159]=605,[160]=606,[161]=607,[162]=608,[164]=609,[166]=610,[167]=611,[168]=612,[201]=551,[202]=553,[203]=555,[204]=557,[205]=559,[206]=561,[207]=563,[208]=565,[209]=567,[210]=569,[211]=571,[212]=573,[213]=575,[214]=577,[215]=579,[216]=581,[217]=583,[218]=585,[219]=587,[220]=589,[301]=590,[302]=591,[303]=592,[304]=593,[305]=594,[306]=595,[307]=596,[308]=597,[309]=598},
+        {[1]=57,[2]=58,[3]=59,[4]=21,[5]=8,[6]=56,[7]=72,[10]=60,[11]=61,[12]=62,[13]=63,[14]=7,[15]=64,[16]=55,[17]=65,[18]=66,[19]=67,[20]=68,[21]=69,[22]=70,[23]=71},
         {[1]=12})
+    env.fmtAsciiChar = function(...) return _G["bs_fmtAsciiChar"](...) end
     local ok, err = pcall(__module_z1_fx, env)
     if not ok then print("Z1 merged: error loading z1-fx: " .. tostring(err)) end
+    if rawget(_G, "isFx2Available") == nil then _G.isFx2Available = env.isFx2Available end
+    if rawget(_G, "updateFx2Visibility") == nil then _G.updateFx2Visibility = env.updateFx2Visibility end
     if rawget(_G, "applyFxLayout") == nil then _G.applyFxLayout = env.applyFxLayout end
+    if rawget(_G, "setPresetControlsVisible") == nil then _G.setPresetControlsVisible = env.setPresetControlsVisible end
+    if rawget(_G, "showPresetManager") == nil then _G.showPresetManager = env.showPresetManager end
+    if rawget(_G, "setPresetView") == nil then _G.setPresetView = env.setPresetView end
+    if rawget(_G, "paintPresetList") == nil then _G.paintPresetList = env.paintPresetList end
     __export(env, "fx_onEditUnitSelect", "onEditUnitSelect")
     __export(env, "fx_onStaticFxTop", "onStaticFxTop")
     __export(env, "fx_fmtDbHalf", "fmtDbHalf")
-    __export(env, "fx_onFxPresetAction", "onFxPresetAction")
+    __export(env, "fx_onFxPresetView", "onFxPresetView")
     __export(env, "fx_onFxSlot", "onFxSlot")
     __export(env, "fx_fmtFxSlot", "fmtFxSlot")
+    __export(env, "fx_onPresetTarget", "onPresetTarget")
+    __export(env, "fx_onPresetSlot", "onPresetSlot")
+    __export(env, "fx_fmtPresetSlot", "fmtPresetSlot")
+    __export(env, "fx_onPresetLoad", "onPresetLoad")
+    __export(env, "fx_onPresetSave", "onPresetSave")
+    __export(env, "fx_onNamePos", "onNamePos")
+    __export(env, "fx_onNameChar", "onNameChar")
+    __export(env, "fx_onPresetRename", "onPresetRename")
+    __export(env, "fx_onPresetDelete", "onPresetDelete")
 end
 
 

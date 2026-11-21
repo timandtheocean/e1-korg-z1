@@ -12,8 +12,8 @@ test.case("Top section sends Filter Routing (258), EG Knob Tgt (260), Filter 1 T
     test.turn(1, 2)
     test.turn(3, 2)
     test.turn(6, 4)
-    test.turn(8, 80)
-    test.turn(12, 65)
+    test.turn(8, 80, "cutoff")
+    test.turn(12, 65, "cutoff")
 
     local sent = test.sent()
     test.count(sent, 5)

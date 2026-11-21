@@ -1,57 +1,75 @@
-# Page 09 — Amp 1 & 2, Output/Pan, OSC 1 Pitch/Mod & Performance Editor (PE Knobs 1–5)
+# Page 9: Dual Amplifiers, Stereo Pan & Performance Knobs (`Amp & Mod`)
 
-[⬅ Back to User Manual Index](../README.md)
+The **Amp & Mod** page combines two key expressive stages of the Korg Z1:
+1. **Top Half (Rows 1–2)**: The dual voice amplifiers (**Amp 1** and **Amp 2**), including output volume, tremolo/level modulation, built-in analog-style **Distortion**, and stereo **Panning**.
+2. **Bottom Half (Rows 3–6)**: A switchable modulation hub controlled by **MOD SELECT**, giving you complete access to **OSC 1 Pitch & Pan Modulation** and all five front-panel **Performance Editor Knobs (`PE Knob 1` – `PE Knob 5`)**.
 
-- **Source Folder:** [`e1/z1-mod/`](../../e1/z1-mod/)
-- **Files:** [`preset.json`](../../e1/z1-mod/preset.json) | [`main.lua`](../../e1/z1-mod/main.lua) | [`main-tests.lua`](../../e1/z1-mod/main-tests.lua)
-- **Z1 Parameters Covered:** All **113** active parameters across `[Amp 1]` (`IDs 315..323`), `[Amp 2]` (`IDs 324..332`), `[Output]` (`IDs 352..355`), `[OSC1 Pitch]` (`IDs 175..187`), and `[Performance Editor Knob 1..5]` (`IDs 384..463`, 80 parameters), all with `ExID = 0`.
-
-> 📸 **[Screenshot Placeholder: `../media/09-amp-mod-pe.png`]**
-> *Add screenshots showing Amp 1/2 + Output/Pan on the top rows and switching `MOD SELECT` between `OSC1 Pitch/Mod` and `PE Knob 1..5`.*
->
-> 🎬 **[Video Placeholder: `../media/09-amp-mod-pe.mp4`]**
-> *Add short video demonstrating `MOD SELECT` switching between `OSC1 Pitch/Mod` and the 5 Performance Editor Knobs.*
+> [!TIP]
+> **Thin Faders for Modulation Depth:** All modulation intensity (`Int`) sliders across both the Amplifier section and the Performance Editor section use **thin horizontal faders** so you can visually distinguish modulation depths at a glance.
 
 ---
 
-## 1. Overview
+## Screen Layout Overview
 
-This page brings together the Korg Z1's dual **Amplifier** stages (**Amp 1** and **Amp 2**), **Master Output / Panpot**, **OSC 1 Core Pitch, Slope & Pitch Modulation**, and the **Performance Editor (`PE Knobs 1..5`)**, where each physical Z1 Performance Knob can simultaneously modulate up to **4 target parameters** (`Target A`, `Target B`, `Target C`, `Target D`) with programmable polarity (`+`/`-`), curve (`Mode 0..3`), and intensity (`0..99`).
+```
++-------------------------------------------------+-------------------------------------------------+
+|                AMP 1 (Cols 1-3)                 |                AMP 2 (Cols 4-6)                 |
++-------------------------------------------------+-------------------------------------------------+
+| [ Amp1 Level ] [Amp1 ModSrc ] [Amp1 ModInt ]    | [ Amp2 Level ] [Amp2 ModSrc ] [Amp2 ModInt ]    |
+| [Amp1 LFO1Int] [Amp1 Distort] [  Amp1 Pan  ]    | [Amp2 LFO1Int] [Amp2 Distort] [  Amp2 Pan  ]    |
++-------------------------------------------------+-------------------------------------------------+
+|  ROW 3: LOWER SECTION MODE SELECTOR                                                               |
+|  [  MOD SELECT  ]  (Switches Rows 4-6 between "OSC1 & Pan Mod" and "PE Knob 1" .. "PE Knob 5")    |
++---------------------------------------------------------------------------------------------------+
+|  ROWS 4-6: DYNAMIC MODULATION OR PERFORMANCE KNOB ASSIGNMENTS                                     |
+|  (Displays either OSC1 Pitch / Amp Pan Modulation OR the 4 target assignments of PE Knob 1..5)    |
++---------------------------------------------------------------------------------------------------+
+```
 
 ---
 
-## 2. Control Layout
+## 1. Dual Amplifiers, Distortion & Stereo Pan (Rows 1–2)
 
-### Control Set 1 — Amp 1, Amp 2 & Stereo Output/Pan (Rows 1–2)
+Filter 1 feeds directly into **Amp 1** (Columns 1–3) and Filter 2 feeds directly into **Amp 2** (Columns 4–6). Each amplifier has its own set of controls:
 
-| Slot | Control ID | Parameter ID | Label | Type | Range / Values |
-|:---:|:---:|:---:|---|---|---|
-| **1** | `1` | `315` | `Amp1 Level` | Fader | `0..99` |
-| **2** | `2` | `320` | `Amp1 ModEG` | List | `0..4` (`EG1`, `EG2`, `EG3`, `EG4`, `Amp EG`) |
-| **3** | `3` | `322` | `Amp1 ModSrc` | List | `0..48` (`MODSRC1`) |
-| **4** | `4` | `323` | `Amp1 ModInt` | Fader | `-99..+99` |
-| **5** | `5` | `352` | `Out Pan` | Fader | `-50..+50` (`L50..C00..R50`) |
-| **6** | `6` | `355` | `Out Level` | Fader | `0..99` |
-| **7** | `7` | `324` | `Amp2 Level` | Fader | `0..99` |
-| **8** | `8` | `329` | `Amp2 ModEG` | List | `0..4` (`EG1`, `EG2`, `EG3`, `EG4`, `Amp EG`) |
-| **9** | `9` | `331` | `Amp2 ModSrc` | List | `0..48` (`MODSRC1`) |
-| **10** | `10` | `332` | `Amp2 ModInt` | Fader | `-99..+99` |
-| **11** | `11` | `353` | `Pan ModSrc` | List | `0..48` (`MODSRC1`) |
-| **12** | `12` | `354` | `Pan ModInt` | Fader | `-99..+99` |
+| Control | Range / Options | Musical Function |
+| :--- | :--- | :--- |
+| **Amp1 / Amp2 Level** | `0` – `99` | Sets the overall volume of the Filter 1 / Amp 1 path and Filter 2 / Amp 2 path. |
+| **ModSrc & ModInt** | Mod Source / `-99` to `+99` | Modulates amplifier volume from any controller or envelope. |
+| **LFO1 Int** | `-99` to `+99` | Direct **LFO 1** tremolo depth on that amplifier. *(Tip: Set `Amp1 LFO1Int` to `+50` and `Amp2 LFO1Int` to `-50` with the two amps panned Left and Right for stereo auto-panning!)* |
+| **Distort** | `OFF` / `ON` | Engages per-voice waveshaping distortion on that amplifier path for gritty leads, overdriven organs, and aggressive acid basses. |
+| **Pan** | `L99` .. `Center` .. `R99` | Positions Amp 1 and Amp 2 independently across the stereo field before the signal enters the 2-Band EQ and Effects. |
 
-### Control Set 2 — Amp 1/2 Key Track & `MOD SELECT` (Rows 3–4)
-- **Slots 13..16 (`Amp 1 Key Track`):** `Amp1 LoKey` (`316`), `Amp1 HiKey` (`317`), `Amp1 LoInt` (`318`), `Amp1 HiInt` (`319`).
-- **Slots 19..22 (`Amp 2 Key Track`):** `Amp2 LoKey` (`325`), `Amp2 HiKey` (`326`), `Amp2 LoInt` (`327`), `Amp2 HiInt` (`328`).
-- **Slot 18 (`MOD SELECT`):** Selects the active bank for Slots `17, 23..36`:
-  - `0 = OSC1 Pitch/Mod` (`IDs 175..187`, 13 parameters)
-  - `1 = PE Knob 1` (`IDs 384..399`, 16 parameters)
-  - `2 = PE Knob 2` (`IDs 400..415`, 16 parameters)
-  - `3 = PE Knob 3` (`IDs 416..431`, 16 parameters)
-  - `4 = PE Knob 4` (`IDs 432..447`, 16 parameters)
-  - `5 = PE Knob 5` (`IDs 448..463`, 16 parameters)
+---
 
-### Control Set 3 — Dynamic `OSC1 Pitch/Mod` or `PE Knob 1..5` (Slots `17, 23..36`)
-- **When `MOD SELECT = OSC1 Pitch/Mod` (`0`):**
-  Exposes `OSC1 Octave` (`175`), `Semitone` (`176`), `Fine` (`177`), `Offset` (`178`), `Center Key` (`179`), `Low Slope` (`180`), `High Slope` (`181`), `Mod1 Src/Int/Ctrl/CtrlInt` (`182..185`), and `Mod2 Src/Int` (`186..187`).
-- **When `MOD SELECT = PE Knob 1..5` (`1..5`):**
-  Exposes all 16 parameters for the selected Performance Editor Knob (`Target A..D` `0..230`, `Polar A..D` `+/-`, `Mode A..D` `0..3`, and `Int A..D` `0..99`).
+## 2. Using `MOD SELECT` (Row 3)
+
+Turn **MOD SELECT** in Row 3 to switch the lower half of the page (Rows 4–6) between six views:
+1. **`OSC1 & Pan Mod`** *(Default)*
+2. **`PE Knob 1`**
+3. **`PE Knob 2`**
+4. **`PE Knob 3`**
+5. **`PE Knob 4`**
+6. **`PE Knob 5`**
+
+---
+
+## 3. Mode A: `OSC1 & Pan Mod` View
+
+When **MOD SELECT** is set to `OSC1 & Pan Mod`, Rows 4–6 provide direct hands-on control over:
+- **Amp 1 & Amp 2 Dynamic Stereo Pan Modulation**:
+  - **Amp1 PanModSrc & Amp1 PanModInt (`-99` to `+99`)**: Moves Amplifier 1 across the stereo field using an LFO, envelope, note number, or velocity.
+  - **Amp2 PanModSrc & Amp2 PanModInt (`-99` to `+99`)**: Moves Amplifier 2 independently across the stereo field.
+- **Additional Pitch & Voice Modulation Controls**: Quick access to oscillator pitch envelope and LFO modulation depths right alongside your amplifier and pan controls.
+
+---
+
+## 4. Mode B: `PE Knob 1` – `PE Knob 5` Views
+
+The Korg Z1 has five physical **Performance Editor (`PE`) Knobs** on its front panel. Each physical knob can simultaneously control up to **4 different synthesis parameters** at once with independent positive or negative intensities!
+
+When you select **`PE Knob 1`** through **`PE Knob 5`** with **MOD SELECT**, Rows 4–6 display the complete assignment matrix for that knob:
+
+- **Knob Mode**: Configures the response curve and grouping behavior of the selected Performance Knob.
+- **Target 1 – Target 4 Parameter Selectors**: Choose up to 4 destination parameters inside the patch for that knob to control (such as Filter Cutoff, Resonance, OSC Edge, LFO Speed, Envelope Release, or Effect Balance).
+- **Target 1 – Target 4 Intensity Faders *(Thin Faders)* (`-99` to `+99`)**: Set how far and in which direction (`+` or `-`) each of the 4 assigned parameters moves when you turn that Performance Knob.

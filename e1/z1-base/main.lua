@@ -5,7 +5,37 @@
 -- 4. Automatic E1 Patch Backup & Recover from Backup (Control 4 / Control 7 + E1 Snapshot Bank 12 Slot 36)
 -- 5. Snapshot-backed Undo / Redo Buffer (Controls 5 & 6 + E1 Snapshot Bank 12 Slots 1..16)
 
+-- 6. User Scale 1 (12-Note, Global IDs 276..287) & User Scale 2 (128-Key, Global IDs 288..415)
+--    with interactive HARP-style Tuning Keyboard, Global Dump Request/Send (0EH/51H & 41H Group 00),
+--    and persistent Named Tuning Preset Manager (16 slots via persist/recall).
+
 local DEVICE_ID = 1
+
+local OV_SCALE_TARGET = 1
+local OV_KEY_SELECT   = 2
+
+local ENUM_DEFS = {
+    [OV_SCALE_TARGET] = {
+        { value = 0, label = "User Scale 1" },
+        { value = 1, label = "User Scale 2" },
+    },
+    [OV_KEY_SELECT] = {
+        { value = 0,  label = "C" },
+        { value = 1,  label = "C#" },
+        { value = 2,  label = "D" },
+        { value = 3,  label = "D#" },
+        { value = 4,  label = "E" },
+        { value = 5,  label = "F" },
+        { value = 6,  label = "F#" },
+        { value = 7,  label = "G" },
+        { value = 8,  label = "G#" },
+        { value = 9,  label = "A" },
+        { value = 10, label = "A#" },
+        { value = 11, label = "B" },
+    },
+}
+
+NOTE_NAMES = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" }
 
 -- Dedicated Electra One Snapshot Bank & Slots for Undo/Redo and Pre-Request Backup
 SNAPSHOT_BANK         = 12
@@ -14,6 +44,7 @@ MAX_UNDO_SLOTS          = 16
 UNDO_IDLE_PERIOD_MS     = 1000 -- 1-second timer tick
 UNDO_IDLE_TIMEOUT_SEC   = 15   -- Save Undo snapshot only after 15 seconds of no user activity
 BACKUP_HOLD_TIMEOUT_SEC = 30   -- Keep pre-switch backup patch locked for 30 seconds after preset change
+HANDSHAKE_RETRY_SEC     = 5    -- Retry Z1 Handshake Device Inquiry every 5 seconds until connected
 local COLOUR_BACKUP     = 0xD9534F
 local COLOUR_UNDO       = 0x529DEC
 
@@ -75,17 +106,18 @@ end
 -- 2. Program Name State, Korg 7-to-8-bit Pack/Unpack & Patch Buffer
 -- ============================================================================
 
-programNameChars = {
+programNameChars = _G.programNameChars or {
     0x49, 0x6E, 0x69, 0x74, 0x20, 0x50, 0x72, 0x6F,
     0x67, 0x72, 0x61, 0x6D, 0x20, 0x20, 0x20, 0x20,
 } -- Default: "Init Program    "
+_G.programNameChars = programNameChars
 selectedCharPos = 1
 local suppressCharCallback = false
 
 -- Current unpacked Z1 Program data buffer on the E1 (576 bytes when populated from a full 40H dump)
 currentUnpackedProgram = nil
 
-function getProgramNameString(charsTable)
+function getProgramNameString(charsTable, trim)
     local src = charsTable or programNameChars
     local chars = {}
     for i = 1, 16 do
@@ -95,7 +127,21 @@ function getProgramNameString(charsTable)
         end
         chars[i] = string.char(c)
     end
-    return table.concat(chars)
+    local s = table.concat(chars)
+    return trim and (s:gsub("%s+$", "")) or s
+end
+
+function setNameCharsBuffer(dst, src, maxAscii)
+    local hi = maxAscii or 0x7F
+    local isStr = (type(src) == "string")
+    local isTbl = (type(src) == "table")
+    for i = 1, 16 do
+        local b = isStr and string.byte(src, i) or (isTbl and src[i]) or 0x20
+        if type(b) ~= "number" or b < 0x20 or b > hi then
+            b = 0x20
+        end
+        dst[i] = b
+    end
 end
 
 -- Unpack Korg 7-to-8-bit packed MIDI bytes:
@@ -183,14 +229,15 @@ end
 -- 3. Patch Backup & Snapshot-Backed Undo / Redo Buffer
 -- ============================================================================
 
-patchBackup         = nil
-backupHoldSeconds   = 0
-undoStack           = {}
-undoCursor          = 0
-paramValues         = {}
-undoIdleSeconds     = 0
-undoPendingSnapshot = false
-timer               = timer or {}
+patchBackup           = nil
+backupHoldSeconds     = 0
+undoStack             = {}
+undoCursor            = 0
+paramValues           = {}
+undoIdleSeconds       = 0
+undoPendingSnapshot   = false
+handshakeRetrySeconds = 0
+timer                 = timer or {}
 
 local function hasSnapshotsApi()
     return type(_G.snapshots) == "table"
@@ -214,7 +261,7 @@ local function ensureOneSecondTimerRunning()
 end
 
 local function stopTimerIfIdle()
-    if not undoPendingSnapshot and backupHoldSeconds <= 0 then
+    if z1Status.connected and not undoPendingSnapshot and backupHoldSeconds <= 0 then
         if hasTimerApi() then
             _G.timer.disable()
         end
@@ -327,7 +374,7 @@ end
 -- pre-switch patchBackup and reset the 30-second countdown so the user has 30s to Recover.
 function beginPresetChangeBackup(reason)
     if backupHoldSeconds <= 0 then
-        savePatchBackup(reason)
+        savePatchBackup(reason, true)
     end
     backupHoldSeconds = BACKUP_HOLD_TIMEOUT_SEC
     ensureOneSecondTimerRunning()
@@ -403,6 +450,14 @@ function flushPendingUndoSnapshot()
 end
 
 function timer.onTick()
+    if not z1Status.connected then
+        handshakeRetrySeconds = handshakeRetrySeconds + 1
+        if handshakeRetrySeconds >= HANDSHAKE_RETRY_SEC then
+            handshakeRetrySeconds = 0
+            sendDeviceInquiry()
+        end
+    end
+
     if backupHoldSeconds > 0 then
         backupHoldSeconds = backupHoldSeconds - 1
         if backupHoldSeconds == 0 then
@@ -647,14 +702,7 @@ function setProgramNameFromDump(unpackedBytes)
     if type(unpackedBytes) ~= "table" then
         return
     end
-    for i = 1, 16 do
-        local b = unpackedBytes[i]
-        if type(b) == "number" and b >= 0x20 and b <= 0x7F then
-            programNameChars[i] = b
-        else
-            programNameChars[i] = 0x20
-        end
-    end
+    setNameCharsBuffer(programNameChars, unpackedBytes, 0x7F)
     refreshStatusAndNameWidgets()
 end
 
@@ -1105,10 +1153,12 @@ function parseSysexMessage(sysexBlock)
             z1Status.familyId  = family
             z1Status.memberId  = member
             z1Status.version   = string.format("v%d.%02d", major, minor)
+            handshakeRetrySeconds = 0
             local dev = preset.getDevice(DEVICE_ID)
             if dev and dev.setChannel then
                 dev:setChannel(z1Status.channel)
             end
+            stopTimerIfIdle()
             info.setText(string.format("Z1 Connected Ch%d %s", z1Status.channel, z1Status.version))
             refreshStatusAndNameWidgets()
             return true, "inquiry"
@@ -1120,7 +1170,7 @@ function parseSysexMessage(sysexBlock)
         local func = body[4]
 
         -- 2a. Program Parameter Change (41H): 42 3g 46 41 01 idL idM valL valM
-        if func == 0x41 and (body[5] == 0x01 or body[5] == 0x00) and #body >= 9 then
+        if func == 0x41 and body[5] == 0x01 and #body >= 9 then
             local id14 = (body[6] & 0x7F) | ((body[7] & 0x7F) << 7)
             local exId = (id14 >> 11) & 0x07
             local paramId = id14 & 0x07FF
@@ -1141,6 +1191,54 @@ function parseSysexMessage(sysexBlock)
             return true, "param_change"
         end
 
+        -- 2b. Global/MIDI Parameter Change (41H, Group 00): 42 3g 46 41 00 idL idM valL valM
+        if func == 0x41 and body[5] == 0x00 and #body >= 9 then
+            local id14 = (body[6] & 0x7F) | ((body[7] & 0x7F) << 7)
+            local paramId = id14 & 0x07FF
+            local val14 = (body[8] & 0x7F) | ((body[9] & 0x7F) << 7)
+            local signedVal = (val14 >= 0x2000) and (val14 - 0x4000) or val14
+            if paramId >= 276 and paramId <= 287 then
+                userScale1[paramId - 276] = math.max(-100, math.min(100, signedVal))
+                if currentUnpackedGlobal then
+                    currentUnpackedGlobal[paramId - 10] = signedVal & 0xFF
+                end
+                refreshTuningWidgets()
+                return true, "global_param_change"
+            elseif paramId >= 288 and paramId <= 415 then
+                userScale2[paramId - 288] = math.max(-100, math.min(100, signedVal))
+                if currentUnpackedGlobal then
+                    currentUnpackedGlobal[paramId - 10] = signedVal & 0xFF
+                end
+                refreshTuningWidgets()
+                return true, "global_param_change"
+            end
+        end
+
+        -- 2c. Global Data Dump (51H, sub-byte 00 = Global): 42 3g 46 51 00 <packed 476B -> 416B unpacked>
+        if func == 0x51 and body[5] == 0x00 and #body >= 6 then
+            local payload = {}
+            for i = 6, #body do
+                payload[#payload + 1] = body[i]
+            end
+            local unpacked = unpackKorgData(payload, 416)
+            if #unpacked >= 405 then
+                currentUnpackedGlobal = unpacked
+                for k = 0, 11 do
+                    local b = unpacked[266 + k] or 0
+                    userScale1[k] = (b >= 128) and (b - 256) or b
+                end
+                for n = 0, 127 do
+                    local b = unpacked[278 + n] or 0
+                    userScale2[n] = (b >= 128) and (b - 256) or b
+                end
+                z1Status.lastDump = "51H Global"
+                refreshStatusAndNameWidgets()
+                refreshTuningWidgets()
+                info.setText("Loaded Z1 Global Tuning (51H)")
+                return true, "global_dump"
+            end
+        end
+
         local dataStart = nil
         if func == 0x40 then
             if body[5] == 0x01 or (body[5] == 0x00 and totalBodyLen >= 664) then
@@ -1158,7 +1256,7 @@ function parseSysexMessage(sysexBlock)
                 -- Keep the previous patch locked in Backup for 30 seconds so the user can Recover
                 beginPresetChangeBackup("Pre-Dump Backup")
             else
-                savePatchBackup("Pre-Dump Backup")
+                savePatchBackup("Pre-Dump Backup", true)
             end
 
             local payload = {}
@@ -1185,18 +1283,19 @@ function parseSysexMessage(sysexBlock)
 
             currentUnpackedProgram = unpacked
             setProgramNameFromDump(unpacked)
+            info.setText("Patch: " .. getProgramNameString())
             if #unpacked >= 576 then
                 local params = decodeZ1ProgramDump(unpacked)
                 if _G.preset and type(_G.preset.onZ1Dump) == "function" then
                     _G.preset.onZ1Dump(params, unpacked)
                 end
                 if not hadFullPatch then
-                    -- First real 576-byte dump loaded: initialize patchBackup with this full patch
-                    savePatchBackup("Initial Patch Backup")
+                    -- First real 576-byte dump loaded: initialize patchBackup with this full patch in RAM
+                    savePatchBackup("Initial Patch Backup", true)
                 end
             end
-            pushUndoState("Dump:" .. getProgramNameString())
-            info.setText("Patch: " .. getProgramNameString())
+            pushUndoState("Dump:" .. getProgramNameString(), true)
+            refreshStatusAndNameWidgets()
             return true, "program_dump"
         end
     end
@@ -1208,14 +1307,30 @@ function midi.onSysex(_midiInput, sysexBlock)
     parseSysexMessage(sysexBlock)
 end
 
-function midi.onProgramChange(_midiInput, channel, _programNumber)
+autoPatchReqOnPc = true
+
+function onPcPatchReqToggle(_valueObject, value)
+    if suppressTune then return end
+    autoPatchReqOnPc = (math.floor(value) > 0)
+    z1PersistLib.autoPcReq = autoPatchReqOnPc
+    if type(persist) == "function" then pcall(persist, z1PersistLib) end
+    info.setText(autoPatchReqOnPc and "PC Patch Req: ON" or "PC Patch Req: OFF")
+end
+
+function midi.onProgramChange(_midiInput, channel, programNumber)
+    if not autoPatchReqOnPc then
+        return
+    end
     local gCh = (getGlobalChannel() & 0x0F) + 1
+    if not z1Status.connected and type(channel) == "number" and channel >= 1 and channel <= 16 then
+        gCh = channel
+    end
     if channel == nil or channel == gCh then
+        sendSysexBody(buildCurrentProgramDumpRequestBody(gCh - 1))
         if currentUnpackedProgram and #currentUnpackedProgram >= 576 then
             beginPresetChangeBackup("Pre-PC Backup")
         end
-        sendSysexBody(buildCurrentProgramDumpRequestBody())
-        info.setText("Z1 Program Change -> Req 40H (Bk Held 30s)")
+        info.setText(string.format("Z1 PC #%d -> Req 40H", (programNumber or 0) + 1))
     end
 end
 
@@ -1325,26 +1440,32 @@ function onRedoBtn(_valueObject, value)
     end
 end
 
-function onNamePos(_valueObject, value)
-    local pos = math.floor(value)
-    if pos < 1 then
-        pos = 1
-    elseif pos > 16 then
-        pos = 16
+function onNamePos(valueObject, value)
+    local pos = math.max(1, math.min(16, math.floor(value)))
+    local cid = valueObject and valueObject.getControl and valueObject:getControl():getId() or 33
+    if cid == 17 then
+        tuneNamePos = pos
+        refreshTuningWidgets()
+        return
     end
     selectedCharPos = pos
     refreshStatusAndNameWidgets()
 end
 
-function onNameChar(_valueObject, value)
+function onNameChar(valueObject, value)
     if suppressCharCallback then
         return
     end
-    local ascii = math.floor(value)
-    if ascii < 0x20 then
-        ascii = 0x20
-    elseif ascii > 0x7F then
-        ascii = 0x7F
+    local ascii = math.max(0x20, math.min(0x7F, math.floor(value)))
+    local cid = valueObject and valueObject.getControl and valueObject:getControl():getId() or 34
+    if cid == 18 then
+        if ascii > 0x7E then ascii = 0x20 end
+        tuneNameChars[tuneNamePos] = ascii
+        local kbdCtrl = preset.getControl(20)
+        if kbdCtrl then kbdCtrl:repaint() end
+        local listCtrl = preset.getControl(21)
+        if listCtrl then listCtrl:repaint() end
+        return
     end
     -- Patch Name edits (IDs 1..16) are sent directly to the Z1 and do NOT push to Undo/Redo
     programNameChars[selectedCharPos] = ascii
@@ -1359,11 +1480,632 @@ function onNameChar(_valueObject, value)
 end
 
 -- ============================================================================
+-- 6b. User Scale Tuning Table (Global IDs 276..415), HARP Keyboard & Presets
+-- ============================================================================
+
+TUNE_PRESET_SLOTS     = 16
+TUNE_PRESET_CTRL      = { 15, 16, 17, 18, 21, 22, 23, 25, 26 }
+userScale1            = {} -- 0..11  (12-note octave scale, -100..+100 cents, Global IDs 276..287)
+userScale2            = {} -- 0..127 (128-key full scale,   -100..+100 cents, Global IDs 288..415)
+for k = 0, 11 do userScale1[k] = 0 end
+for n = 0, 127 do userScale2[n] = 0 end
+
+currentUnpackedGlobal = nil
+selectedScaleTarget   = 0 -- 0 = User Scale 1 (12-note), 1 = User Scale 2 (128-key)
+selectedTuneOctave    = 4 -- -1..9 (default 4 = C4..B4, MIDI notes 60..71)
+selectedTuneKey       = 0 -- 0..11 (C..B)
+tunePresetView        = false
+tunePresetSlot        = 1 -- 1..16
+tuneNamePos           = 1 -- 1..16
+tuneNameChars         = {}
+local pendingTuneDel  = nil
+local suppressTune    = false
+
+z1PersistLib = _G.z1PersistLib or { version = 2, unit = {}, chain = {}, tuning = {}, oscUnit = {}, oscDual = {} }
+_G.z1PersistLib = z1PersistLib
+z1PersistLib.tuning = z1PersistLib.tuning or {}
+z1PersistLib.oscUnit = z1PersistLib.oscUnit or {}
+z1PersistLib.oscDual = z1PersistLib.oscDual or {}
+
+-- 5-octave HARP2.4_mk2 keyboard layout (default C2..C7 = MIDI notes 36..96, 61 keys)
+local KEYBOARD_DEFAULT_LOW, KEYBOARD_DEFAULT_HIGH = 36, 96
+local KEYBOARD_IS_WHITE = {
+    [0] = true, [1] = false, [2] = true, [3] = false, [4] = true, [5] = true,
+    [6] = false, [7] = true, [8] = false, [9] = true, [10] = false, [11] = true,
+}
+
+local function keyboardNoteRange()
+    local low, high = KEYBOARD_DEFAULT_LOW, KEYBOARD_DEFAULT_HIGH
+    if selectedScaleTarget == 1 then
+        local active = (selectedTuneOctave + 1) * 12 + selectedTuneKey
+        if active < low then
+            low = active - (active % 12)
+            high = math.min(127, low + 60)
+        elseif active > high then
+            local r = active % 12
+            high = math.min(127, r == 0 and active or (active + 12 - r))
+            low = math.max(0, high - 60)
+            low = low - (low % 12)
+        end
+    end
+    return low, high
+end
+
+local function defaultTunePresetName(slot)
+    return string.format("Tuning %02d", slot)
+end
+
+setNameCharsBuffer(tuneNameChars, defaultTunePresetName(1), 0x7E)
+
+function buildGlobalDumpRequestBody(gCh)
+    local g = gCh or getGlobalChannel()
+    return { 0x42, 0x30 | (g & 0x0F), 0x46, 0x0E, 0x00 }
+end
+
+function buildGlobalParamChangeBody(paramId, signedVal, gCh)
+    local g = gCh or getGlobalChannel()
+    local id14 = paramId & 0x3FFF
+    local v14 = signedVal & 0x3FFF
+    return {
+        0x42,
+        0x30 | (g & 0x0F),
+        0x46,
+        0x41,
+        0x00, -- Group 00 = Global & MIDI
+        id14 & 0x7F,
+        (id14 >> 7) & 0x7F,
+        v14 & 0x7F,
+        (v14 >> 7) & 0x7F,
+    }
+end
+
+function buildGlobalDataDumpBody(unpackedGlobal, gCh)
+    local g = gCh or getGlobalChannel()
+    local packed = packKorgData(unpackedGlobal)
+    local body = { 0x42, 0x30 | (g & 0x0F), 0x46, 0x51, 0x00 }
+    for i = 1, #packed do
+        body[#body + 1] = packed[i]
+    end
+    return body
+end
+
+local function getActiveMidiNote(semitone)
+    local k = semitone or selectedTuneKey
+    local note = (selectedTuneOctave + 1) * 12 + k
+    if note < 0 then return 0 elseif note > 127 then return 127 end
+    return note
+end
+
+function getKeyTuningCents(semitone)
+    local k = semitone or selectedTuneKey
+    if selectedScaleTarget == 0 then
+        return userScale1[k] or 0
+    end
+    return userScale2[getActiveMidiNote(k)] or 0
+end
+
+local function setKeyTuningCents(semitone, cents, sendToZ1)
+    local c = math.max(-100, math.min(100, math.floor(cents)))
+    if selectedScaleTarget == 0 then
+        userScale1[semitone] = c
+        if currentUnpackedGlobal then
+            currentUnpackedGlobal[266 + semitone] = c & 0xFF
+        end
+        if sendToZ1 then
+            sendSysexBody(buildGlobalParamChangeBody(276 + semitone, c))
+        end
+    else
+        local note = getActiveMidiNote(semitone)
+        userScale2[note] = c
+        if currentUnpackedGlobal then
+            currentUnpackedGlobal[278 + note] = c & 0xFF
+        end
+        if sendToZ1 then
+            sendSysexBody(buildGlobalParamChangeBody(288 + note, c))
+        end
+    end
+end
+
+local function tunePresetHeader()
+    return (selectedScaleTarget == 0)
+        and "USER SCALE 1 (12-NOTE) PRESETS (16)"
+        or "USER SCALE 2 (128-KEY) PRESETS (16)"
+end
+
+local lastGroup52Label = nil
+
+local function setGroup52Label(lbl)
+    if lbl == lastGroup52Label then return end
+    lastGroup52Label = lbl
+    local grp3 = preset.getGroup(52)
+    if grp3 then grp3:setLabel(lbl) end
+end
+
+local function updateKeyboardGroupHeader()
+    if tunePresetView then
+        setGroup52Label("TUNING PRESET LIBRARY - " .. tunePresetHeader())
+        return
+    end
+    local noteName = NOTE_NAMES[selectedTuneKey + 1] or "C"
+    if selectedScaleTarget == 0 then
+        setGroup52Label(string.format("TUNING KEYBOARD - USER SCALE 1 (1-OCTAVE) | KEY %s", noteName))
+    else
+        setGroup52Label(string.format("TUNING KEYBOARD - USER SCALE 2 (128-KEY) | KEY %s%d (#%d)",
+            noteName, selectedTuneOctave, getActiveMidiNote(selectedTuneKey)))
+    end
+end
+
+local function syncCtrlValue(cid, val)
+    local c = controls.get(cid)
+    if not c then return end
+    local vo = c:getValue("value")
+    if vo and vo:getValue() ~= val then
+        vo:updateValue(val)
+    end
+end
+
+function refreshTuningWidgets()
+    suppressTune = true
+    suppressCharCallback = true
+    syncCtrlValue(12, selectedTuneKey)
+    syncCtrlValue(13, getKeyTuningCents(selectedTuneKey))
+    local octCtrl = controls.get(11)
+    if octCtrl then
+        local vo = octCtrl:getValue("value")
+        if vo and vo:getValue() ~= selectedTuneOctave then
+            vo:updateValue(selectedTuneOctave)
+        end
+        local wantOctVis = (selectedScaleTarget == 1)
+        if octCtrl:isVisible() ~= wantOctVis then
+            octCtrl:setVisible(wantOctVis)
+        end
+    end
+    syncCtrlValue(10, selectedScaleTarget)
+    syncCtrlValue(26, selectedScaleTarget)
+    syncCtrlValue(14, tunePresetView and 1 or 0)
+    syncCtrlValue(25, tunePresetSlot)
+    syncCtrlValue(17, tuneNamePos)
+    syncCtrlValue(18, tuneNameChars[tuneNamePos] or 0x20)
+    suppressCharCallback = false
+    suppressTune = false
+    updateKeyboardGroupHeader()
+    if tunePresetView then
+        local listCtrl = preset.getControl(21)
+        if listCtrl then listCtrl:repaint() end
+    else
+        local kbdCtrl = preset.getControl(20)
+        if kbdCtrl then kbdCtrl:repaint() end
+    end
+end
+
+function setTunePresetView(on)
+    tunePresetView = on and true or false
+    pendingTuneDel = nil
+    window.stop()
+    local kbdCtrl = controls.get(20)
+    if kbdCtrl and kbdCtrl:isVisible() ~= (not tunePresetView) then
+        kbdCtrl:setVisible(not tunePresetView)
+    end
+    for _, cid in ipairs(TUNE_PRESET_CTRL) do
+        local c = controls.get(cid)
+        if c and c:isVisible() ~= tunePresetView then
+            c:setVisible(tunePresetView)
+        end
+    end
+    refreshTuningWidgets()
+    window.resume()
+end
+
+function requestGlobalTuningDump()
+    sendSysexBody(buildGlobalDumpRequestBody())
+    info.setText("Requested Z1 Global Tuning (0EH)")
+end
+
+function sendGlobalTuningTable()
+    if currentUnpackedGlobal and #currentUnpackedGlobal >= 416 then
+        for k = 0, 11 do
+            currentUnpackedGlobal[266 + k] = (userScale1[k] or 0) & 0xFF
+        end
+        for n = 0, 127 do
+            currentUnpackedGlobal[278 + n] = (userScale2[n] or 0) & 0xFF
+        end
+        sendSysexBody(buildGlobalDataDumpBody(currentUnpackedGlobal))
+        info.setText("Sent Z1 Global Dump (51H)")
+    elseif selectedScaleTarget == 0 then
+        for k = 0, 11 do
+            sendSysexBody(buildGlobalParamChangeBody(276 + k, userScale1[k] or 0))
+        end
+        info.setText("Sent User Scale 1 (12 Notes)")
+    else
+        -- Send the active 12-note octave + up to 4 additional detuned keys (max 16 SysEx packets)
+        -- to avoid overflowing the Electra One outgoing SysEx queue when no 51H Global Dump is loaded.
+        local baseNote = math.max(0, math.min(116, (selectedTuneOctave + 1) * 12))
+        local sentCount = 0
+        for n = baseNote, math.min(127, baseNote + 11) do
+            sendSysexBody(buildGlobalParamChangeBody(288 + n, userScale2[n] or 0))
+            sentCount = sentCount + 1
+        end
+        for n = 0, 127 do
+            if (n < baseNote or n > baseNote + 11) and (userScale2[n] or 0) ~= 0 then
+                if sentCount >= 16 then break end
+                sendSysexBody(buildGlobalParamChangeBody(288 + n, userScale2[n]))
+                sentCount = sentCount + 1
+            end
+        end
+        info.setText(string.format("Sent User Scale 2 (%d Notes)", sentCount))
+    end
+end
+
+function fmtCents(_valueObject, value)
+    return string.format("%+d ct", math.floor(value))
+end
+
+function fmtScaleOctave(_valueObject, value)
+    local oct = math.floor(value)
+    return string.format("Oct %d (C%d)", oct, oct)
+end
+
+function fmtTunePresetSlot(_valueObject, value)
+    local s = math.floor(value)
+    local e = z1PersistLib.tuning["s" .. tostring(s)]
+    return string.format("%02d %s", s, (e and e.name) or "<empty>")
+end
+
+function paintTunePresetList(control)
+    local b = control:getBounds()
+    local w, h = b[WIDTH], b[HEIGHT]
+    graphics.setColor(0x18202C)
+    graphics.fillRect(0, 0, w, h)
+    graphics.setColor(0x03A598)
+    graphics.drawRect(0, 0, w, h)
+
+    graphics.setColor(ORANGE)
+    graphics.print(6, 3, tunePresetHeader(), w - 12, LEFT)
+
+    local chars = {}
+    for i = 1, 16 do
+        local ch = string.char(tuneNameChars[i] or 0x20)
+        chars[i] = (i == tuneNamePos) and ("[" .. ch .. "]") or ch
+    end
+    graphics.setColor(WHITE)
+    graphics.print(6, 21, "Name: " .. table.concat(chars), w - 12, LEFT)
+
+    local rows = 6
+    local first = math.max(1, math.min(tunePresetSlot - 2, TUNE_PRESET_SLOTS - rows + 1))
+    for r = 0, rows - 1 do
+        local s = first + r
+        if s > TUNE_PRESET_SLOTS then break end
+        local y = 40 + r * 17
+        local e = z1PersistLib.tuning["s" .. tostring(s)]
+        if s == tunePresetSlot then
+            graphics.setColor(0x03A598)
+            graphics.fillRect(2, y - 1, w - 4, 17)
+            graphics.setColor(0x000000)
+        else
+            graphics.setColor(e and WHITE or 0x7A8290)
+        end
+        graphics.print(8, y, string.format("%02d  %s", s, (e and e.name) or "- empty -"), w - 16, LEFT)
+    end
+end
+
+local function isMidiNoteSelected(n)
+    if selectedScaleTarget == 0 then
+        return (n % 12) == selectedTuneKey
+    end
+    return n == getActiveMidiNote(selectedTuneKey)
+end
+
+local function getMidiNoteCents(n)
+    if selectedScaleTarget == 0 then
+        return userScale1[n % 12] or 0
+    end
+    return userScale2[n] or 0
+end
+
+-- 5-octave HARP2.4_mk2 keyboard renderer (with black text on selected keys & tuning indicators)
+function paintTuningKeyboard(control)
+    local b = control:getBounds()
+    local w, h = b[WIDTH], b[HEIGHT]
+    local hiColor = control:getColor() or 0x529DEC
+
+    graphics.setColor(0x101010)
+    graphics.fillRect(0, 0, w, h)
+
+    local low, high = keyboardNoteRange()
+    local whiteNotes = {}
+    for n = low, high do
+        if KEYBOARD_IS_WHITE[n % 12] then
+            whiteNotes[#whiteNotes + 1] = n
+        end
+    end
+    local whiteCount = #whiteNotes
+    if whiteCount == 0 then return end
+    local whiteW = w // whiteCount
+
+    local whiteIndexOf = {}
+    for i, n in ipairs(whiteNotes) do
+        whiteIndexOf[n] = i - 1
+    end
+
+    -- 1. White keys (exact HARP2.4_mk2 geometry: kx = (i - 1) * whiteW, fillRect(kx + 1, 0, whiteW - 2, h))
+    for i, n in ipairs(whiteNotes) do
+        local kx = (i - 1) * whiteW
+        local on = isMidiNoteSelected(n)
+        local cents = getMidiNoteCents(n)
+        graphics.setColor(on and hiColor or WHITE)
+        graphics.fillRect(kx + 1, 0, whiteW - 2, h)
+
+        if cents ~= 0 then
+            graphics.setColor(cents > 0 and GREEN or RED)
+            graphics.fillRect(kx + 3, h - 6, whiteW - 6, 4)
+        end
+        if on or (n % 12 == 0) then
+            graphics.setColor(0x000000)
+            local oct = (n // 12) - 1
+            local lbl = (n % 12 == 0) and ("C" .. tostring(oct)) or NOTE_NAMES[(n % 12) + 1]
+            graphics.print(kx + 1, h - 22, lbl, whiteW - 2, CENTER, on and BOLD or REGULAR, SMALL)
+        end
+    end
+
+    -- 2. Black keys (exact HARP2.4_mk2 geometry: blackW = (whiteW * 3) // 5, blackH = (h * 3) // 5)
+    local blackW = (whiteW * 3) // 5
+    local blackH = (h * 3) // 5
+    for n = low, high do
+        if not KEYBOARD_IS_WHITE[n % 12] then
+            local wi = whiteIndexOf[n - 1]
+            if wi then
+                local kx = (wi + 1) * whiteW - (blackW // 2)
+                local on = isMidiNoteSelected(n)
+                local cents = getMidiNoteCents(n)
+                graphics.setColor(on and hiColor or 0x000000)
+                graphics.fillRect(kx, 0, blackW, blackH)
+
+                if cents ~= 0 then
+                    graphics.setColor(cents > 0 and GREEN or RED)
+                    graphics.fillRect(kx + 2, blackH - 6, blackW - 4, 4)
+                end
+                if on then
+                    graphics.setColor(0x000000)
+                    graphics.print(kx, blackH - 22, NOTE_NAMES[(n % 12) + 1], blackW, CENTER, BOLD, SMALL)
+                end
+            end
+        end
+    end
+end
+
+local function selectKeyFromTouch(control, x, y)
+    local b = control:getBounds()
+    local w, h = b[WIDTH], b[HEIGHT]
+    local low, high = keyboardNoteRange()
+    local whiteNotes = {}
+    for n = low, high do
+        if KEYBOARD_IS_WHITE[n % 12] then
+            whiteNotes[#whiteNotes + 1] = n
+        end
+    end
+    local whiteCount = #whiteNotes
+    if whiteCount == 0 then return end
+    local whiteW = w // whiteCount
+    local whiteIndexOf = {}
+    for i, n in ipairs(whiteNotes) do
+        whiteIndexOf[n] = i - 1
+    end
+    local blackW = (whiteW * 3) // 5
+    local blackH = (h * 3) // 5
+
+    local hitNote = nil
+    if y <= blackH then
+        for n = low, high do
+            if not KEYBOARD_IS_WHITE[n % 12] then
+                local wi = whiteIndexOf[n - 1]
+                if wi then
+                    local kx = (wi + 1) * whiteW - (blackW // 2)
+                    if x >= kx and x <= kx + blackW then
+                        hitNote = n
+                        break
+                    end
+                end
+            end
+        end
+    end
+    if not hitNote then
+        local wi = math.max(1, math.min(whiteCount, (x // whiteW) + 1))
+        hitNote = whiteNotes[wi]
+    end
+    if hitNote then
+        local newKey = hitNote % 12
+        local newOct = (selectedScaleTarget == 1) and ((hitNote // 12) - 1) or selectedTuneOctave
+        if newKey == selectedTuneKey and newOct == selectedTuneOctave then
+            return
+        end
+        selectedTuneKey = newKey
+        selectedTuneOctave = newOct
+        refreshTuningWidgets()
+    end
+end
+
+function onReqTuningBtn(_valueObject, value)
+    if math.floor(value) > 0 then
+        requestGlobalTuningDump()
+    end
+end
+
+function onSendTuningBtn(_valueObject, value)
+    if math.floor(value) > 0 then
+        sendGlobalTuningTable()
+    end
+end
+
+function onScaleTarget(_valueObject, value)
+    if suppressTune then return end
+    local newTarget = (math.floor(value) > 0) and 1 or 0
+    if newTarget == selectedScaleTarget then return end
+    selectedScaleTarget = newTarget
+    refreshTuningWidgets()
+    info.setText(selectedScaleTarget == 0 and "User Scale 1 (12-Note)" or "User Scale 2 (128-Key)")
+end
+
+function onScaleOctave(_valueObject, value)
+    if suppressTune then return end
+    local newOct = math.max(-1, math.min(9, math.floor(value)))
+    if newOct == selectedTuneOctave then return end
+    selectedTuneOctave = newOct
+    refreshTuningWidgets()
+end
+
+function onTuneKeySelect(_valueObject, value)
+    if suppressTune then return end
+    local newKey = math.max(0, math.min(11, math.floor(value)))
+    if newKey == selectedTuneKey then return end
+    selectedTuneKey = newKey
+    refreshTuningWidgets()
+end
+
+local function centSign(c)
+    return (c > 0 and 1) or (c < 0 and -1) or 0
+end
+
+function onTuneKeyCents(_valueObject, value)
+    if suppressTune then return end
+    local newCents = math.max(-100, math.min(100, math.floor(value)))
+    local oldCents = getKeyTuningCents(selectedTuneKey)
+    if newCents == oldCents then return end
+    setKeyTuningCents(selectedTuneKey, newCents, true)
+    if not tunePresetView and centSign(oldCents) ~= centSign(newCents) then
+        local kbdCtrl = preset.getControl(20)
+        if kbdCtrl then kbdCtrl:repaint() end
+    end
+end
+
+function onResetScaleBtn(_valueObject, value)
+    if math.floor(value) <= 0 then return end
+    if selectedScaleTarget == 0 then
+        for k = 0, 11 do userScale1[k] = 0 end
+    else
+        for n = 0, 127 do userScale2[n] = 0 end
+    end
+    refreshTuningWidgets()
+    info.setText("Reset Active Scale to 0 ct")
+end
+
+function onTunePresetView(_valueObject, value)
+    if suppressTune then return end
+    local on = math.floor(value) > 0
+    if on ~= tunePresetView then
+        setTunePresetView(on)
+    end
+end
+
+function onTunePresetSlot(_valueObject, value)
+    if suppressTune then return end
+    pendingTuneDel = nil
+    tunePresetSlot = math.max(1, math.min(TUNE_PRESET_SLOTS, math.floor(value)))
+    local e = z1PersistLib.tuning["s" .. tostring(tunePresetSlot)]
+    setNameCharsBuffer(tuneNameChars, (e and e.name) or defaultTunePresetName(tunePresetSlot), 0x7E)
+    refreshTuningWidgets()
+end
+
+function onTunePresetSave(_valueObject, value)
+    if math.floor(value) <= 0 then return end
+    pendingTuneDel = nil
+    local name = getProgramNameString(tuneNameChars, true)
+    if name == "" then name = defaultTunePresetName(tunePresetSlot) end
+    local s1, s2 = {}, {}
+    for k = 0, 11 do s1[k + 1] = userScale1[k] or 0 end
+    for n = 0, 127 do s2[n + 1] = userScale2[n] or 0 end
+    z1PersistLib.tuning["s" .. tostring(tunePresetSlot)] = {
+        name   = name,
+        target = selectedScaleTarget,
+        s1     = s1,
+        s2     = s2,
+    }
+    local ok = (type(persist) == "function") and pcall(persist, z1PersistLib) or false
+    refreshTuningWidgets()
+    info.setText(string.format("Saved Tuning %02d: %s%s", tunePresetSlot, name, ok and "" or " (RAM)"))
+end
+
+function onTunePresetLoad(_valueObject, value)
+    if math.floor(value) <= 0 then return end
+    pendingTuneDel = nil
+    local e = z1PersistLib.tuning["s" .. tostring(tunePresetSlot)]
+    if not e then
+        info.setText(string.format("Tuning Slot %02d Empty", tunePresetSlot))
+        return
+    end
+    if type(e.s1) == "table" then
+        for k = 0, 11 do userScale1[k] = e.s1[k + 1] or 0 end
+    end
+    if type(e.s2) == "table" then
+        for n = 0, 127 do userScale2[n] = e.s2[n + 1] or 0 end
+    end
+    if type(e.target) == "number" then
+        selectedScaleTarget = e.target
+    end
+    setNameCharsBuffer(tuneNameChars, e.name or defaultTunePresetName(tunePresetSlot), 0x7E)
+    refreshTuningWidgets()
+    sendGlobalTuningTable()
+    info.setText("Loaded Tuning: " .. tostring(e.name))
+end
+
+function onTunePresetRename(_valueObject, value)
+    if math.floor(value) <= 0 then return end
+    pendingTuneDel = nil
+    local e = z1PersistLib.tuning["s" .. tostring(tunePresetSlot)]
+    if not e then
+        info.setText("Slot empty - use Save")
+        return
+    end
+    local name = getProgramNameString(tuneNameChars, true)
+    if name == "" then name = defaultTunePresetName(tunePresetSlot) end
+    e.name = name
+    if type(persist) == "function" then pcall(persist, z1PersistLib) end
+    refreshTuningWidgets()
+    info.setText("Renamed: " .. name)
+end
+
+function onTunePresetDelete(_valueObject, value)
+    if math.floor(value) <= 0 then return end
+    local key = "s" .. tostring(tunePresetSlot)
+    if not z1PersistLib.tuning[key] then
+        info.setText(string.format("Slot %02d is empty", tunePresetSlot))
+        return
+    end
+    if pendingTuneDel ~= tunePresetSlot then
+        pendingTuneDel = tunePresetSlot
+        info.setText(string.format("Press DELETE again to clear %02d", tunePresetSlot))
+        return
+    end
+    pendingTuneDel = nil
+    z1PersistLib.tuning[key] = nil
+    if type(persist) == "function" then pcall(persist, z1PersistLib) end
+    setNameCharsBuffer(tuneNameChars, defaultTunePresetName(tunePresetSlot), 0x7E)
+    refreshTuningWidgets()
+    info.setText(string.format("Cleared slot %02d", tunePresetSlot))
+end
+
+-- ============================================================================
 -- 7. Lifecycle Hooks
 -- ============================================================================
 
 function preset.onLoad()
     suppressCharCallback = true
+    for ovId, items in pairs(ENUM_DEFS) do
+        overlays.create(ovId, items)
+    end
+    if type(recall) == "function" and (type(recallJson) ~= "function" or recallJson() ~= nil) then
+        local stored = {}
+        if pcall(recall, stored) and stored.version == 2 then
+            if type(stored.unit) == "table" then z1PersistLib.unit = stored.unit end
+            if type(stored.chain) == "table" then z1PersistLib.chain = stored.chain end
+            if type(stored.tuning) == "table" then z1PersistLib.tuning = stored.tuning end
+            if type(stored.oscUnit) == "table" then z1PersistLib.oscUnit = stored.oscUnit end
+            if type(stored.oscDual) == "table" then z1PersistLib.oscDual = stored.oscDual end
+            if type(stored.autoPcReq) == "boolean" then
+                autoPatchReqOnPc = stored.autoPcReq
+                z1PersistLib.autoPcReq = stored.autoPcReq
+            end
+        end
+    end
     local statusCtrl = preset.getControl(3)
     if statusCtrl then
         statusCtrl:setPaintCallback(paintZ1Status)
@@ -1372,10 +2114,32 @@ function preset.onLoad()
     if dispCtrl then
         dispCtrl:setPaintCallback(paintProgramName)
     end
+    local kbdCtrl = preset.getControl(20)
+    if kbdCtrl then
+        kbdCtrl:setPaintCallback(paintTuningKeyboard)
+        kbdCtrl:setTouchCallback(function(c, event)
+            if event and (event.type == DOWN or event.type == CLICK or event.type == nil) then
+                selectKeyFromTouch(c, event.x or 0, event.y or 30)
+            end
+        end)
+    end
+    local listCtrl = preset.getControl(21)
+    if listCtrl then
+        listCtrl:setPaintCallback(paintTunePresetList)
+    end
 end
 
 function preset.onReady()
     suppressCharCallback = false
+    local c10 = controls.get(10)
+    if c10 then c10:getValue("value"):setOverlayId(OV_SCALE_TARGET) end
+    local c26 = controls.get(26)
+    if c26 then c26:getValue("value"):setOverlayId(OV_SCALE_TARGET) end
+    local c12 = controls.get(12)
+    if c12 then c12:getValue("value"):setOverlayId(OV_KEY_SELECT) end
+    suppressTune = true
+    syncCtrlValue(27, autoPatchReqOnPc and 1 or 0)
+    suppressTune = false
     if #undoStack == 0 then
         pushUndoState("Init", true)
     end
@@ -1384,5 +2148,9 @@ function preset.onReady()
     else
         refreshStatusAndNameWidgets()
     end
+    setTunePresetView(false)
+    handshakeRetrySeconds = 0
+    sendDeviceInquiry()
+    ensureOneSecondTimerRunning()
     info.setText("Z1 Base Ready")
 end

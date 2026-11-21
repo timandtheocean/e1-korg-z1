@@ -5,10 +5,10 @@
 --   [Controller]      (IDs 366..373, ExID = 0: SW1, SW2, Foot SW, Foot Pedal, Pad Hold)
 --   [Link Arpeggio]   (IDs 374..383, ExID = 0: Pattern, Speed, Resolution, Octave, Latch, KeySync, Vel/Gate)
 --
--- Layout (35 controls across 3 Control Sets):
+-- Layout (33 controls across 3 Control Sets):
 --   Control Set 1 (Rows 1-2, Slots 1..12):  Program Common & Unison (IDs 17..27, 30)
 --   Control Set 2 (Rows 3-4, Slots 13..24): Scale (IDs 28..29) & Link Arpeggiator (IDs 374..383)
---   Control Set 3 (Rows 5-6, Slots 25..35): Assignable Controllers (IDs 366..373) & Program Name Editor/Display (IDs 1..16)
+--   Control Set 3 (Rows 5-6, Slots 25..32, 35): Assignable Controllers (IDs 366..373) & Program Name Display (IDs 1..16)
 
 local DEVICE_ID = 1
 
@@ -279,21 +279,37 @@ STATIC_COMMON_MAP = {
 -- 3. Program Name State (IDs 1..16) & SysEx Builders
 -- ============================================================================
 
-programNameChars = {
+programNameChars = _G.programNameChars or {
     0x49, 0x6E, 0x69, 0x74, 0x20, 0x50, 0x72, 0x6F,
     0x67, 0x72, 0x61, 0x6D, 0x20, 0x20, 0x20, 0x20,
 } -- Default: "Init Program    "
-selectedCharPos = 1
-local suppressCharCallback = false
+_G.programNameChars = programNameChars
 
-function getProgramNameString()
+function getProgramNameString(charsTable, trim)
+    local src = charsTable or programNameChars
     local chars = {}
     for i = 1, 16 do
-        local c = programNameChars[i] or 0x20
-        if c < 0x20 or c > 0x7F then c = 0x20 end
+        local c = src[i] or 0x20
+        if c < 0x20 or c > 0x7F then
+            c = 0x20
+        end
         chars[i] = string.char(c)
     end
-    return table.concat(chars)
+    local s = table.concat(chars)
+    return trim and (s:gsub("%s+$", "")) or s
+end
+
+function setNameCharsBuffer(dst, src, maxAscii)
+    local hi = maxAscii or 0x7F
+    local isStr = (type(src) == "string")
+    local isTbl = (type(src) == "table")
+    for i = 1, 16 do
+        local b = isStr and string.byte(src, i) or (isTbl and src[i]) or 0x20
+        if type(b) ~= "number" or b < 0x20 or b > hi then
+            b = 0x20
+        end
+        dst[i] = b
+    end
 end
 
 -- Helper to populate Program Name from an unpacked Z1 Program Dump (bytes 1..16) without echoing SysEx
@@ -301,20 +317,7 @@ function setProgramNameFromDump(unpackedBytes)
     if type(unpackedBytes) ~= "table" then
         return
     end
-    for i = 1, 16 do
-        local b = unpackedBytes[i]
-        if type(b) == "number" and b >= 0x20 and b <= 0x7F then
-            programNameChars[i] = b
-        else
-            programNameChars[i] = 0x20
-        end
-    end
-    local charCtrl = controls.get(34)
-    if charCtrl then
-        suppressCharCallback = true
-        charCtrl:getValue("value"):updateValue(programNameChars[selectedCharPos])
-        suppressCharCallback = false
-    end
+    setNameCharsBuffer(programNameChars, unpackedBytes, 0x7F)
     local dispCtrl = preset.getControl(35)
     if dispCtrl then
         dispCtrl:repaint()
@@ -323,17 +326,6 @@ end
 
 function fmtArpSpeed(_valueObject, value)
     return string.format("%d BPM", math.floor(value) + 30)
-end
-
-function fmtAsciiChar(_valueObject, value)
-    local v = math.floor(value)
-    if v < 0x20 or v > 0x7F then v = 0x20 end
-    if v == 0x20 then
-        return "SPC (32)"
-    elseif v == 0x7F then
-        return "DEL (127)"
-    end
-    return string.format("'%s' (%d)", string.char(v), v)
 end
 
 function paintProgramName(control)
@@ -345,13 +337,11 @@ function paintProgramName(control)
     graphics.setColor(0x529DEC)
     graphics.drawRect(0, 0, w, h)
 
-    local nameStr = getProgramNameString()
-    local curChar = string.sub(nameStr, selectedCharPos, selectedCharPos)
     graphics.setColor(ORANGE)
-    graphics.print(6, 3, string.format("PROGRAM NAME [Pos %02d: '%s']", selectedCharPos, curChar), w - 12, LEFT, REGULAR, SMALL)
+    graphics.print(6, 3, "PROGRAM NAME", w - 12, LEFT, REGULAR, SMALL)
 
     graphics.setColor(WHITE)
-    graphics.print(6, 23, nameStr, w - 12, LEFT, BOLD, MEDIUM)
+    graphics.print(6, 23, getProgramNameString(), w - 12, LEFT, BOLD, MEDIUM)
 end
 
 function buildParamChangeBody(paramId, signedVal, gCh)
@@ -398,36 +388,6 @@ function onStaticCommon(valueObject, value)
         z1Val = (ov and ov:getValueByIndex(v)) or v
     end
     sendParamChange(spec.id, z1Val)
-end
-
-function onNamePos(_valueObject, value)
-    local pos = math.floor(value)
-    if pos < 1 then pos = 1 elseif pos > 16 then pos = 16 end
-    selectedCharPos = pos
-    local charCtrl = controls.get(34)
-    if charCtrl then
-        suppressCharCallback = true
-        charCtrl:getValue("value"):updateValue(programNameChars[selectedCharPos] or 0x20)
-        suppressCharCallback = false
-    end
-    local dispCtrl = preset.getControl(35)
-    if dispCtrl then
-        dispCtrl:repaint()
-    end
-end
-
-function onNameChar(_valueObject, value)
-    if suppressCharCallback then
-        return
-    end
-    local ascii = math.floor(value)
-    if ascii < 0x20 then ascii = 0x20 elseif ascii > 0x7F then ascii = 0x7F end
-    programNameChars[selectedCharPos] = ascii
-    sendParamChange(selectedCharPos, ascii)
-    local dispCtrl = preset.getControl(35)
-    if dispCtrl then
-        dispCtrl:repaint()
-    end
 end
 
 -- ============================================================================
@@ -478,14 +438,6 @@ function preset.onZ1Param(exId, paramId, z1Val)
     if exId ~= 0 then return end
     if paramId >= 1 and paramId <= 16 then
         programNameChars[paramId] = z1Val & 0x7F
-        if paramId == selectedCharPos then
-            local charCtrl = controls.get(34)
-            if charCtrl then
-                suppressCharCallback = true
-                charCtrl:getValue("value"):updateValue(programNameChars[selectedCharPos])
-                suppressCharCallback = false
-            end
-        end
         local dispCtrl = preset.getControl(35)
         if dispCtrl then dispCtrl:repaint() end
         return
@@ -494,7 +446,10 @@ function preset.onZ1Param(exId, paramId, z1Val)
         if spec.id == paramId then
             local disp = (spec.kind == "list") and z1ValToIdx(spec.ov, z1Val) or z1Val
             local c = controls.get(cid)
-            if c then c:getValue("value"):updateValue(disp) end
+            if c then
+                local vo = c:getValue("value")
+                if vo and vo:getValue() ~= disp then vo:updateValue(disp) end
+            end
         end
     end
 end
@@ -510,7 +465,10 @@ function preset.onZ1Dump(params, unpacked)
         if z1Val ~= nil then
             local disp = (spec.kind == "list") and z1ValToIdx(spec.ov, z1Val) or z1Val
             local c = controls.get(cid)
-            if c then c:getValue("value"):updateValue(disp) end
+            if c then
+                local vo = c:getValue("value")
+                if vo and vo:getValue() ~= disp then vo:updateValue(disp) end
+            end
         end
     end
 end

@@ -1,39 +1,62 @@
-# Page 11 — Program Common, Unison, Scale, Assignable Controllers, Link Arpeggiator & Patch Name
+# Page 2: Voice Common, Key Scale & Arpeggiator (`Common & Arp`)
 
-[⬅ Back to User Manual Index](../README.md)
-
-- **Source Folder:** [`e1/z1-common-arp/`](../../e1/z1-common-arp/)
-- **Files:** [`preset.json`](../../e1/z1-common-arp/preset.json) | [`main.lua`](../../e1/z1-common-arp/main.lua) | [`main-tests.lua`](../../e1/z1-common-arp/main-tests.lua)
-- **Z1 Parameters Covered:** All **48** parameters across `[Program Name]` (`IDs 1..16`), `[Program Common]` (`IDs 17..30`), `[Controller]` (`IDs 366..373`), and `[Link Arpeggio]` (`IDs 374..383`), all with `ExID = 0`.
-
-> 📸 **[Screenshot Placeholder: `../media/11-common-arp.png`]**
-> *Add screenshot of the Program Common, Link Arpeggiator, Assignable Controllers, and Program Name LCD widget.*
->
-> 🎬 **[Video Placeholder: `../media/11-common-arp.mp4`]**
-> *Add short video demonstrating Unison Voice/Detune, Link Arpeggiator controls, and the 2-slot Program Name LCD display.*
+The **Common & Arp** page brings together all patch-wide voice assignment, unison stacking, musical scale selection, tuning instabilities, arpeggiator feel, and patch category settings on a single clean overview screen.
 
 ---
 
-## 1. Overview
+## Screen Layout Overview
 
-This page provides complete control over the Korg Z1's voice architecture and performance controls:
-- **Program Common & Unison (`IDs 17..30`):** Program Category (`0..17`), Sound Group (`A..D`), Assign Mode (`Poly` / `Mono`), Trigger Mode & Priority, Retrigger Source (`MODSRC2`) & Threshold, Unison SW / Voice Count (`2..6`) / Detune (`0..99`), Random Pitch Intensity, and Scale Type (`Equal Temp`..`User Scale`) & Key (`C..B`).
-- **Link Arpeggiator (`IDs 374..383`):** Pattern Select (`Preset00..User19`), Speed (`40..240 BPM`), Resolution, Octave (`1..4`), Latch, Key Sync, Velocity (`Key` or `1..127`), Gate (`Step` or `1..100%`), Intensity, and Timbre (`Common`).
-- **Assignable Controllers (`IDs 366..373`):** `SW1`/`SW2` Assign & Mode (`Toggle`/`Moment`), `Foot SW` Assign & Polarity, `Foot Pedal` Assign, and `X/Y Pad Hold`.
-- **Program Name Editor & Custom LCD Widget (`IDs 1..16`, `Controls 33..35`):** 2-slot custom graphical LCD display showing the 16-character patch name and active cursor position.
+```
++---------------------------------------------------------------------------------------------------+
+|  ROW 1: VOICE ASSIGN & UNISON STACKING                                                            |
+|  [Voice Assign ] [   Unison    ] [Unison Detune]                                                  |
++---------------------------------------------------------------------------------------------------+
+|  ROW 2: PATCH SCALE, KEY, RANDOM PITCH & TRANSPOSE                                                |
+|  [ Scale Type  ] [  Scale Key  ] [Random Pitch ] [  Transpose  ]                                  |
++---------------------------------------------------------------------------------------------------+
+|  ROW 3: ACTIVE PROGRAM NAME BANNER                                                                |
+|  [         Program Name (Read-Only Live Display)         ]                                        |
++---------------------------------------------------------------------------------------------------+
+|  ROW 4: ARPEGGIATOR & PATCH CATEGORY                                                              |
+|  [  Arp Gate   ] [Arp Velocity ] [  Category   ]                                                  |
++---------------------------------------------------------------------------------------------------+
+```
 
 ---
 
-## 2. Control Layout (35 Controls across 3 Control Sets)
+## 1. Voice Assign & Unison Stacking (Row 1)
 
-### Control Set 1 — Program Common & Unison (Rows 1–2)
-- **Row 1 (Slots `1..6`):** `[1]` `Category` (`17`), `[2]` `Group` (`18`), `[3]` `Voice Mode` (`19: Poly/Mono`), `[4]` `Trig Mode` (`20: Single/Multi`), `[5]` `Trig Prio` (`21: Last/Low/High`), `[6]` `Rnd Pitch` (`30: 0..7`).
-- **Row 2 (Slots `7..12`):** `[7]` `Retrig Src` (`22: MODSRC2`), `[8]` `Retrig Thr` (`23: 1..99`), `[9]` `Unison SW` (`24: OFF/ON`), `[10]` `Uni Voice` (`25: 2..6`), `[11]` `Uni Detune` (`26: 0..99`), `[12]` `OSC Phase` (`27: 0..100`).
+Controls how the Korg Z1 allocates its polyphonic voices when you play the keyboard:
 
-### Control Set 2 — Scale & Link Arpeggiator (Rows 3–4)
-- **Row 3 (Slots `13..18`):** `[13]` `Scale Type` (`28: 0..10`), `[14]` `Scale Key` (`29: C..B`), `[15]` `Arp Pattern` (`374: 0..34`), `[16]` `Arp Speed` (`375: 40..240`), `[17]` `Arp Reso` (`376: 0..5`), `[18]` `Arp Octave` (`377: 1..4`).
-- **Row 4 (Slots `19..24`):** `[19]` `Arp Latch` (`378: OFF/ON`), `[20]` `Arp KeySync` (`379: OFF/ON`), `[21]` `Arp Vel` (`380: 0=Key, 1..127`), `[22]` `Arp Gate` (`381: 0=Step, 1..100%`), `[23]` `Arp Int` (`382: -99..+99`), `[24]` `Arp Timbre` (`383`).
+| Control | Options / Range | Musical Function |
+| :--- | :--- | :--- |
+| **Voice Assign** | `Poly` / `Mono` | Switches the patch between polyphonic chord playing (`Poly`) and monophonic solo lead/bass playing (`Mono`). |
+| **Unison** | `OFF`, `2 Voices`, `4 Voices` | Stacks multiple Z1 voices on every note you play for massive stereo leads, thick unison basses, or rich chord stabs. |
+| **Unison Detune** | `0` – `99 cents` | Spreads the pitch of stacked Unison voices apart for wide analog-style chorusing and supersaw thickness. |
 
-### Control Set 3 — Assignable Controllers & Program Name Editor (Rows 5–6)
-- **Row 5 (Slots `25..30`):** `[25]` `SW1 Assign` (`366`), `[26]` `SW1 Mode` (`367`), `[27]` `SW2 Assign` (`368`), `[28]` `SW2 Mode` (`369`), `[29]` `FootSW Asgn` (`370`), `[30]` `FootSW Pol` (`371`).
-- **Row 6 (Slots `31..36`):** `[31]` `Pedal Asgn` (`372`), `[32]` `Pad Hold` (`373`), `[33]` `Name Pos` (`1..16`), `[34]` `Name Char` (`32..127`), `[35–36]` **`Program Name`** *(2-Slot Custom LCD Widget)*.
+---
+
+## 2. Musical Scale, Random Pitch & Transpose (Row 2)
+
+Selects which temperament or custom microtonal scale the current patch uses, along with organic analog pitch drift and global transposition:
+
+| Control | Options / Range | Musical Function |
+| :--- | :--- | :--- |
+| **Scale Type** | `Equal Temp 1`, `Equal Temp 2`, `Pure Major`, `Pure Minor`, `Arabic`, `Pythagorean`, `Werckmeister`, `Kirnberger`, `Slendro`, `Pelog`, `UserOctave`, `UserAllNote` | Chooses the patch's musical tuning temperament. Select **`UserOctave`** to play **User Scale 1 (Octave)** or **`UserAllNote`** to play **User Scale 2 (128 Keys)** edited on the [Utility](file:///home/timbos/src/Z1/usermanual/pages/01-base-utility.md) page. |
+| **Scale Key** | `C` through `B` | Sets the root tonic key for historic and world temperaments (such as `Pure Major`, `Pure Minor`, or `Arabic`). |
+| **Random Pitch** | `0` – `7` | Introduces subtle random per-note pitch variation on every key strike, recreating the organic tuning drift of vintage analog poly-synths. |
+| **Transpose** | `-24` to `+24` semitones | Transposes the entire patch up or down by up to 2 octaves in semitone steps. |
+
+---
+
+## 3. Live Program Name Banner (Row 3)
+
+- **Program Name**: Displays the current 16-character patch name across two large lines so you always know which patch is loaded while adjusting performance and scale settings. *(To rename the patch, use the interactive character editor on [Page 1: Utility](file:///home/timbos/src/Z1/usermanual/pages/01-base-utility.md).)*
+
+---
+
+## 4. Arpeggiator & Patch Category (Row 4)
+
+- **Arp Gate (`1%`–`100%` / `Step`)**: Controls the staccato-to-legato note duration of the Z1's built-in arpeggiator.
+- **Arp Velocity (`1`–`127` / `Key` / `Step`)**: Sets a fixed output velocity for arpeggiated notes, or allows the arpeggiator to follow your live keyboard velocity (`Key`) or programmed step velocities (`Step`).
+- **Category (`0`–`15`)**: Assigns the patch to one of the Z1's 16 sound categories (such as Synth Lead, Brass, Strings, Bass, Bell/Mallet, or SFX) for organized browsing on the synthesizer.

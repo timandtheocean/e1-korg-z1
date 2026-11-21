@@ -630,7 +630,7 @@ local NOTE_NAMES = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#",
 
 function fmtSlot(valueObject, value)
     local ctrlId = valueObject:getControl():getId()
-    local slot = ctrlId % 100
+    local slot = ctrlId % 50
     local def = activeSlotDef[slot]
     local v = math.floor(value)
     if not def or not def.fmt then
@@ -672,37 +672,49 @@ function applyModel(modelIdx)
 
     for slot = 2, 36 do
         local def = defs[slot - 1]
-        local fader = controls.get(100 + slot)
+        local fid = 100 + slot
+        local tfid = 150 + slot
+        local fader = controls.get(fid)
+        local thin  = controls.get(tfid)
         local list  = controls.get(200 + slot)
 
         if not def then
             fader:setVisible(false)
+            if thin then thin:setVisible(false) end
             list:setVisible(false)
         elseif def.kind == "list" then
             activeSlotDef[slot] = def
             fader:setVisible(false)
+            if thin then thin:setVisible(false) end
 
             local valObj = list:getValue("value")
             valObj:setOverlayId(def.ov)
             suppressSlot[200 + slot] = true
             valObj:updateValue(0)
+            suppressSlot[200 + slot] = nil
             list:setName(def.name)
             list:setColor(def.color or PURPLE)
             list:setVisible(true)
         else
             activeSlotDef[slot] = def
             list:setVisible(false)
+            local useThin = (thin ~= nil and def.name ~= nil and def.name:find("Int", 1, true) ~= nil)
+            local activeFader = useThin and thin or fader
+            local activeFid   = useThin and tfid or fid
+            local otherFader  = useThin and fader or thin
+            if otherFader then otherFader:setVisible(false) end
 
-            local valObj = fader:getValue("value")
+            local valObj = activeFader:getValue("value")
             local span = def.max - def.min
             local neutral = (def.min < 0 and def.max > 0) and 0 or def.min
             valObj:getMessage():setRange(0, span)
             valObj:setRange(def.min, def.max, neutral, false)
-            suppressSlot[100 + slot] = true
+            suppressSlot[activeFid] = true
             valObj:updateValue(neutral)
-            fader:setName(def.name)
-            fader:setColor(def.color or WHITE)
-            fader:setVisible(true)
+            suppressSlot[activeFid] = nil
+            activeFader:setName(def.name)
+            activeFader:setColor(def.color or WHITE)
+            activeFader:setVisible(true)
         end
     end
 
@@ -730,7 +742,7 @@ function onSlot(valueObject, value)
     if not ctrl:isVisible() then
         return
     end
-    local slot = ctrl:getId() % 100
+    local slot = ctrl:getId() % 50
     local def = activeSlotDef[slot]
     if not def then
         return

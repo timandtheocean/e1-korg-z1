@@ -1,71 +1,70 @@
-# Page 04 — Sub Oscillator, Noise Generator & OSC Common / Portamento
+# Page 6: Sub Oscillator, Noise Generator & Portamento (`Sub, Noise & Common`)
 
-[⬅ Back to User Manual Index](../README.md)
-
-- **Source Folder:** [`e1/z1-sub-noise/`](../../e1/z1-sub-noise/)
-- **Files:** [`preset.json`](../../e1/z1-sub-noise/preset.json) | [`main.lua`](../../e1/z1-sub-noise/main.lua) | [`main-tests.lua`](../../e1/z1-sub-noise/main-tests.lua)
-- **Z1 Parameters Covered:** All **33** parameters across `[SUB OSC]` (`IDs 202..215`), `[Noise Generator]` (`IDs 216..223`), and `[OSC Common]` (`IDs 163..173`), all with `ExID = 0`.
-
-> 📸 **[Screenshot Placeholder: `../media/04-sub-noise.png`]**
-> *Add screenshot of the Sub Oscillator, Noise Generator, and OSC Common / Portamento control sets.*
->
-> 🎬 **[Video Placeholder: `../media/04-sub-noise.mp4`]**
-> *Add short video demonstrating Sub OSC waveform selection, Noise Filter sweep, and Portamento settings.*
+The **Sub, Noise & Common** page controls the Korg Z1's third pitched sound source (**Sub Oscillator**), its **Noise Generator** (which includes a dedicated multimode **Noise Filter** separate from the two main voice filters), and the patch-wide **Pitch Bend & Portamento** behavior.
 
 ---
 
-## 1. Overview
+## Screen Layout Overview
 
-This page groups the Korg Z1's **Sub Oscillator** (with its own full pitch-slope and dual pitch-modulation section), the **Noise Generator** (which includes a dedicated multimode pre-filter with Cutoff, Resonance, and dual Cutoff modulation), and **OSC Common** (Pitch Bend range/step, Common Pitch Modulation, and Portamento).
+```
++---------------------------------------------------------------------------------------------------+
+|  ROW 1: SUB OSCILLATOR                                                                            |
+|  [  Sub Wave   ]                                                                                  |
++---------------------------------------------------------------------------------------------------+
+|  ROWS 2-3: NOISE GENERATOR & DEDICATED NOISE FILTER                                               |
+|  [ Noise FltTyp] [ Noise Cutoff] [ Noise Reso  ] [Noise KeyTrk ] [ Noise EG Src] [ Noise EG Int]  |
+|  [Noise EGVelIn] [Noise Mod Src] [Noise Mod Int]                                                  |
++---------------------------------------------------------------------------------------------------+
+|  ROWS 4-5: GLOBAL PITCH BEND & PORTAMENTO                                                         |
+|  [ PitchBnd Up ] [PitchBnd Down] [Bnd+X ModSrc ] [Bnd-X ModSrc ]                                  |
+|  [ Porta Enable] [Porta Fingerd] [ Porta Time  ] [Porta Mod Src] [Porta Mod Int]                  |
++---------------------------------------------------------------------------------------------------+
+```
 
 ---
 
-## 2. Control Layout (35 Controls across 3 Control Sets)
+## 1. Sub Oscillator (Row 1)
 
-### Control Set 1 — Sub Oscillator (`IDs 202..212, 215`)
+The Sub Oscillator tracks the pitch of **Oscillator 1** one octave below to add weight and foundation—or can be used as a clean carrier input for OSC 1/OSC 2 Ring Modulation, Cross Modulation, Comb Filtering, or Hard Sync.
 
-| Slot | Control ID | Parameter ID | Label | Type | Range / Values |
-|:---:|:---:|:---:|---|---|---|
-| **1** | `1` | `215` | `Sub Wave` | List | `0..3` (`Saw`, `Square`, `Triangle`, `Sine`) |
-| **2** | `2` | `202` | `Sub Octave` | List | `-2..+1` (`16'`, `8'`, `4'`, `2'`) |
-| **3** | `3` | `203` | `Sub Semi` | Fader | `-12..+12` semitones |
-| **4** | `4` | `204` | `Sub Fine` | Fader | `-50..+50` cents |
-| **5** | `5` | `205` | `Sub Offset` | Fader | `-99..+99` |
-| **6** | `6` | `206` | `Sub CtrKey` | Fader | `0..127` (`C-1..G9` MIDI note formatter) |
-| **7** | `7` | `207` | `Sub LoSlp` | Fader | `-50..+100` (`-1.0..+2.0`) |
-| **8** | `8` | `208` | `Sub HiSlp` | Fader | `-50..+100` (`-1.0..+2.0`) |
-| **9** | `9` | `209` | `Sub Mod1Src` | List | `0..48` (`MODSRC1`) |
-| **10** | `10` | `210` | `Sub Mod1Int` | Fader | `-99..+99` |
-| **11** | `11` | `211` | `Sub M1Ctrl` | List | `0..48` (`MODSRC1`) |
-| **12** | `12` | `212` | `Sub M1CInt` | Fader | `-99..+99` |
+- **Sub Wave**: Selects the Sub Oscillator waveform:
+  - `Sine`: Pure fundamental sub-bass weight.
+  - `Triangle`: Warm low-end with gentle odd harmonics.
+  - `Saw`: Bright sub-octave buzz.
+  - `Pulse`: Hollow square-wave sub-octave punch.
 
-### Control Set 2 — Sub OSC Mod 2 & Noise Generator (`IDs 213..214, 216..223`)
+*(Set the Sub Oscillator's level and routing into Filter 1 and Filter 2 on [Page 7: Mixer](file:///home/timbos/src/Z1/usermanual/pages/05-mixer.md).)*
 
-| Slot | Control ID | Parameter ID | Label | Type | Range / Values |
-|:---:|:---:|:---:|---|---|---|
-| **13** | `13` | `213` | `Sub Mod2Src` | List | `0..48` (`MODSRC1`) |
-| **14** | `14` | `214` | `Sub Mod2Int` | Fader | `-99..+99` |
-| **15** | `15` | `216` | `Noise Flt` | List | `0..3` (`LPF`, `HPF`, `BPF`, `THRU`) |
-| **16** | `16` | `217` | `Noise Trim` | Fader | `0..99` |
-| **17** | `17` | `218` | `Noise Cut` | Fader | `0..99` |
-| **18** | `18` | `223` | `Noise Reso` | Fader | `0..99` |
-| **19** | `19` | `219` | `Ns CutSrc1` | List | `0..48` (`MODSRC1`) |
-| **20** | `20` | `220` | `Ns CutInt1` | Fader | `-99..+99` |
-| **21** | `21` | `221` | `Ns CutSrc2` | List | `0..48` (`MODSRC1`) |
-| **22** | `22` | `222` | `Ns CutInt2` | Fader | `-99..+99` |
+---
 
-### Control Set 3 — OSC Common & Portamento (`IDs 163..173`)
+## 2. Noise Generator & Dedicated Multimode Noise Filter (Rows 2–3)
 
-| Slot | Control ID | Parameter ID | Label | Type | Range / Values |
-|:---:|:---:|:---:|---|---|---|
-| **25** | `25` | `163` | `PBend Int+` | Fader | `-24..+24` semitones |
-| **26** | `26` | `164` | `PBend Int-` | Fader | `-24..+24` semitones |
-| **27** | `27` | `165` | `PBend Stp+` | Fader | `0..12` (`0 = Continuous`, `1..12` semitone steps) |
-| **28** | `28` | `166` | `PBend Stp-` | Fader | `0..12` |
-| **29** | `29` | `167` | `CmnMod Src` | List | `0..48` (`MODSRC1`) |
-| **30** | `30` | `168` | `CmnMod Int` | Fader | `-99..+99` |
-| **31** | `31` | `169` | `Porta SW` | Toggle Pad | `0..1` (`OFF` / `ON`) |
-| **32** | `32` | `170` | `Porta Mode` | List | `0..1` (`Normal`, `Fingered`) |
-| **33** | `33` | `171` | `Porta Time` | Fader | `0..99` |
-| **34** | `34` | `172` | `Porta Src` | List | `0..48` (`MODSRC1`) |
-| **35** | `35` | `173` | `Porta Int` | Fader | `-99..+99` |
+Before the Z1's white noise generator even reaches the main Mixer or Main Filters 1 & 2, it passes through its own dedicated resonant **Noise Filter**. This allows you to sculpt tuned breath transients, wind sweeps, snare rattle, or bow rosin hiss independently of your main filter settings.
+
+| Control | Range / Options | Musical Function |
+| :--- | :--- | :--- |
+| **Noise FltTyp** | `LPF`, `HPF`, `BPF`, `2BPF`, `BYP` | Selects Low-Pass, High-Pass, Band-Pass, Dual Band-Pass, or Bypass for the pre-mixer noise filter. |
+| **Noise Cutoff** | `0` – `99` | Sets the center/cutoff frequency of the noise filter. |
+| **Noise Reso** | `0` – `99` | Boosts resonance around the noise cutoff frequency; at high settings, the noise becomes pitched. |
+| **Noise KeyTrk** | `-200%` to `+200%` | Causes the noise filter cutoff to track the note you play on the keyboard (`100%` = 1:1 chromatic tracking). |
+| **Noise EG Src** | `EG1` – `EG4`, `Amp1 EG`, `Amp2 EG` | Selects which of the Z1's envelopes sweeps the noise filter cutoff. |
+| **Noise EG Int** | `-99` to `+99` | Depth and polarity of the envelope sweep on the noise filter cutoff. |
+| **Noise EGVelIn** | `-99` to `+99` | Scales the noise filter envelope sweep depth by keyboard velocity. |
+| **Noise Mod Src** | Any Mod Source | Assigns an additional real-time modulator (such as an LFO, Joystick, or Aftertouch) to the noise cutoff. |
+| **Noise Mod Int** | `-99` to `+99` | Depth of the secondary noise cutoff modulation. |
+
+---
+
+## 3. Pitch Bend & Portamento (Rows 4–5)
+
+Controls how the entire voice glides between notes and responds to horizontal joystick (`±X`) pitch-bend gestures:
+
+| Control | Range / Options | Musical Function |
+| :--- | :--- | :--- |
+| **PitchBnd Up** | `-48` to `+48` semitones | Pitch bend range when moving the Z1 joystick to the right (`+X`). |
+| **PitchBnd Down** | `-48` to `+48` semitones | Pitch bend range when moving the Z1 joystick to the left (`-X`). |
+| **Bnd+X ModSrc / Bnd-X ModSrc** | Mod Sources | Optional alternate modulation controllers routed to positive and negative pitch bend. |
+| **Porta Enable** | `OFF` / `ON` | Turns pitch glide (Portamento) between notes on or off. |
+| **Porta Fingerd** | `OFF` / `ON` | When **ON** (`Fingered`), portamento glides only when you play legato (overlapping notes) and jumps immediately when you play detached notes. |
+| **Porta Time** | `0` – `99` | Sets the glide speed from instant (`0`) to long cinematic sweeps (`99`). |
+| **Porta Mod Src & Int** | Mod Source / `-99` to `+99` | Modulates portamento speed dynamically (for example, using Velocity so hard strikes glide faster than soft notes). |

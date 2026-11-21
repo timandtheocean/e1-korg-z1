@@ -9,7 +9,20 @@ local function assertBytes(msg, expected)
     end
 end
 
-test.case("Handshake button sends Universal Device Inquiry and parses Z1 Identity Reply (42 46 00 01 00)", function()
+test.case("Handshake is sent automatically on load, retries every 5s while disconnected, and parses Z1 Identity Reply", function()
+    -- 1. Before connection, timer retries Device Inquiry every 5 seconds (not on ticks 1..4)
+    z1Status.connected = false
+    handshakeRetrySeconds = 0
+    test.clear()
+    for _ = 1, 4 do
+        timer.onTick()
+    end
+    test.none(test.sent(), "no retry before 5 seconds")
+    timer.onTick() -- 5th second -> sends automatic retry
+    test.count(test.sent(), 1)
+    assertBytes(test.sent()[1], { 0xF0, 0x7E, 0x00, 0x06, 0x01, 0xF7 })
+
+    -- 2. Manual Handshake button also sends Universal Device Inquiry
     test.clear()
     test.turn(1, 1)
 
@@ -23,7 +36,16 @@ test.case("Handshake button sends Universal Device Inquiry and parses Z1 Identit
         0x42, 0x46, 0x00, 0x01, 0x00,
         0x02, 0x00, 0x01, 0x00, 0xF7,
     })
+    test.eq(z1Status.connected, true)
     test.eq(z1Status.channel, 3)
+
+    -- 3. Once connected, 5 seconds of timer ticks do NOT send any further handshake retries
+    test.clear()
+    for _ = 1, 10 do
+        timer.onTick()
+    end
+    test.none(test.sent(), "connected Z1 must stop 5s handshake retries")
+
     test.clear()
     test.turn(2, 1)
     assertBytes(test.sent()[1], { 0xF0, 0x42, 0x32, 0x46, 0x10, 0x00, 0xF7 })
@@ -42,7 +64,7 @@ test.case("Handshake button sends Universal Device Inquiry and parses Z1 Identit
     test.eq(z1Status.version, "v1.02")
 end)
 
-test.case("Patch Request button backs up current E1 patch and sends Current Program Dump Request (10H)", function()
+test.case("Patch Request button & optional automatic Patch Request on MIDI Program Change (10H)", function()
     test.clear()
     test.turn(2, 1)
 
@@ -50,6 +72,23 @@ test.case("Patch Request button backs up current E1 patch and sends Current Prog
     test.count(sent, 1)
     assertBytes(sent[1], { 0xF0, 0x42, 0x30, 0x46, 0x10, 0x00, 0xF7 })
     test.eq(type(patchBackup), "table", "patchBackup created before request")
+
+    -- When PC Patch Req (Control 27) is ON (default), incoming Program Change requests 40H dump
+    test.clear()
+    midi.onProgramChange(nil, 1, 5)
+    test.count(test.sent(), 1)
+    assertBytes(test.sent()[1], { 0xF0, 0x42, 0x30, 0x46, 0x10, 0x00, 0xF7 })
+
+    -- When PC Patch Req (Control 27) is toggled OFF, incoming Program Change does not request 40H dump
+    test.turn(27, 0)
+    test.eq(autoPatchReqOnPc, false)
+    test.clear()
+    midi.onProgramChange(nil, 1, 6)
+    test.none(test.sent(), "PC Patch Req OFF must suppress automatic 10H dump request")
+
+    -- Re-enable PC Patch Req
+    test.turn(27, 1)
+    test.eq(autoPatchReqOnPc, true)
 end)
 
 test.case("Parses 16-byte Program Name directly after 40H header AND from Korg 7-to-8-bit packed 40H dump", function()
@@ -206,4 +245,90 @@ test.case("Patch Name edits do not push to Undo, while synth parameter changes s
     local sentRedo2 = test.sent()
     test.count(sentRedo2, 1)
     assertBytes(sentRedo2[1], { 0xF0, 0x42, 0x30, 0x46, 0x41, 0x01, 0x12, 0x02, 75, 0x00, 0xF7 })
+end)
+
+test.case("Tuning Keyboard, Global Tuning Request/Send (0EH/51H/41H Group 00) & Named Tuning Presets", function()
+    currentUnpackedGlobal = nil
+    test.turn(10, 0) -- User Scale 1 (12-Note)
+    test.turn(19, 1) -- Reset Scale
+    test.clear()
+
+    -- 1. Request Global Tuning Dump (Control 8 -> F0 42 30 46 0E 00 F7)
+    test.turn(8, 1)
+    test.count(test.sent(), 1)
+    assertBytes(test.sent()[1], { 0xF0, 0x42, 0x30, 0x46, 0x0E, 0x00, 0xF7 })
+
+    -- 2. Select Key C# (index 1, Control 12) and tune to -15 cents (Control 13)
+    -- User Scale 1 C# = Global Param ID 277 (277 = 2*128 + 21 -> pl=0x15, pm=0x02), -15 = 0x3FF1 -> vl=0x71, vm=0x7F
+    test.clear()
+    test.turn(12, 1)
+    test.turn(13, -15)
+    test.eq(userScale1[1], -15)
+    test.count(test.sent(), 1)
+    assertBytes(test.sent()[1], { 0xF0, 0x42, 0x30, 0x46, 0x41, 0x00, 0x15, 0x02, 0x71, 0x7F, 0xF7 })
+
+    -- 3. Open Tune Preset submenu (Control 14), select Slot 2 (Control 25), name, Save (Control 16),
+    --    Rename (Control 22), Reset (Control 19), Load (Control 15), and 2-press Delete (Control 23)
+    test.eq(controls.get(11):isVisible(), false, "Scale Octave hidden for User Scale 1 (1-octave repeated)")
+    test.turn(10, 1)
+    test.eq(controls.get(11):isVisible(), true, "Scale Octave shown for User Scale 2 (128-key)")
+    test.turn(10, 0)
+
+    test.turn(14, 1)  -- Open Tune Preset submenu
+    test.eq(tunePresetView, true)
+    test.eq(controls.get(20):isVisible(), false, "Tuning Keyboard hidden while submenu is open")
+    test.eq(controls.get(21):isVisible(), true, "Preset List visible in submenu")
+
+    test.turn(25, 2)  -- Slot 2
+    test.turn(17, 1)  -- Name Pos 1
+    test.turn(18, 74) -- 'J'
+    test.turn(16, 1)  -- Save Tuning Preset 2
+    test.eq(z1PersistLib.tuning["s2"].name, "Juning 02")
+
+    test.turn(17, 2)  -- Name Pos 2
+    test.turn(18, 73) -- 'I'
+    test.turn(22, 1)  -- Rename Tuning Preset 2
+    test.eq(z1PersistLib.tuning["s2"].name, "JIning 02")
+
+    test.turn(19, 1)  -- Reset User Scale 1 to 0 cents
+    test.eq(userScale1[1], 0)
+
+    test.clear()
+    test.turn(15, 1)  -- Load Tuning Preset 2 -> restores userScale1[1] = -15 and sends 12 notes of User Scale 1
+    test.eq(userScale1[1], -15)
+    test.count(test.sent(), 12)
+    assertBytes(test.sent()[2], { 0xF0, 0x42, 0x30, 0x46, 0x41, 0x00, 0x15, 0x02, 0x71, 0x7F, 0xF7 })
+
+    -- Two-press Delete on Slot 2
+    test.turn(23, 1)
+    test.eq(type(z1PersistLib.tuning["s2"]), "table", "first Delete press only arms confirmation")
+    test.turn(23, 1)
+    test.eq(z1PersistLib.tuning["s2"], nil, "second Delete press clears slot 2")
+
+    test.turn(14, 0)  -- Close Tune Preset submenu
+    test.eq(tunePresetView, false)
+    test.eq(controls.get(20):isVisible(), true, "Tuning Keyboard visible again")
+
+    -- 4. Incoming 416-byte 51H Global Dump populates User Scale 1 (bytes 266..277) & User Scale 2 (bytes 278..405)
+    local rawGlobal = {}
+    for i = 1, 416 do rawGlobal[i] = 0 end
+    rawGlobal[266 + 0] = 12             -- User Scale 1 C = +12 cents
+    rawGlobal[278 + 60] = (-25) & 0xFF  -- User Scale 2 C4 (MIDI 60) = -25 cents
+    local dumpBody = buildGlobalDataDumpBody(rawGlobal, 0)
+    local dumpSysex = { 0xF0 }
+    for i = 1, #dumpBody do dumpSysex[#dumpSysex + 1] = dumpBody[i] end
+    dumpSysex[#dumpSysex + 1] = 0xF7
+
+    test.clear()
+    local okG, kindG = parseSysexMessage(dumpSysex)
+    test.eq(okG, true)
+    test.eq(kindG, "global_dump")
+    test.eq(userScale1[0], 12)
+    test.eq(userScale2[60], -25)
+    test.none(test.sent())
+
+    -- 5. Pressing Send Tuning (Control 9) when a 416-byte Global Dump is present transmits the 51H Global Dump
+    test.turn(9, 1)
+    test.count(test.sent(), 1)
+    assertBytes(test.sent()[1], dumpSysex)
 end)

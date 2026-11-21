@@ -1,38 +1,61 @@
-# Page 07 — Envelopes (EG1–EG4 & Amp EG) with Interactive `dx7envelope` Curves
+# Page 10: Five Interactive Envelopes (`Envelopes`)
 
-[⬅ Back to User Manual Index](../README.md)
+The Korg Z1 provides **five multi-stage envelope generators** per voice:
+- **EG 1 (Pitch / General EG)**
+- **EG 2 (Filter 1 / General EG)**
+- **EG 3 (Filter 2 / General EG)**
+- **EG 4 (Auxiliary / General EG)**
+- **Amp EG (Amplifier Volume Envelope — `Amp 1` & `Amp 2`)**
 
-- **Source Folder:** [`e1/z1-eg/`](../../e1/z1-eg/)
-- **Files:** [`preset.json`](../../e1/z1-eg/preset.json) | [`main.lua`](../../e1/z1-eg/main.lua) | [`main-tests.lua`](../../e1/z1-eg/main-tests.lua)
-- **Z1 Parameters Covered:** All **95** active Envelope parameters (`IDs 31..118` for `EG1..EG4` and `IDs 333..351` for `Amp EG`, `ExID = 0`).
+Unlike a standard 4-stage ADSR envelope, every Z1 envelope is an **8-parameter multi-stage contour** with bipolar levels (`-99` to `+99` on EGs 1–4, `0` to `99` on Amp EG), allowing complex double-decays, delayed rises, pitch blips, and evolving loops.
 
-> 📸 **[Screenshot Placeholder: `../media/07-envelopes.png`]**
-> *Add screenshots showing the 5 `dx7envelope` graphical displays and the `Reveal Modulations` bottom drawer.*
->
-> 🎬 **[Video Placeholder: `../media/07-envelopes.mp4`]**
-> *Add short video showing touch-editing the 8-stage envelope curves and toggling `Reveal Modulations`.*
-
----
-
-## 1. Overview
-
-The Korg Z1 provides five 9-parameter multi-stage Envelope Generators (**EG 1**, **EG 2**, **EG 3**, **EG 4**, and **Amp EG**), each with:
-- **9 Envelope Shape Parameters:** `Start Level`, `Attack Time`, `Attack Level`, `Decay 1 Time`, `Break Point Level`, `Decay 2 Time`, `Sustain Level`, `Release Time`, and `Release Level` (for `EG1..4`).
-- **10 Envelope Modulation Parameters:** `Level Mod Source`, `Start/Attack/Break Lvl Mod Int`, `Time Mod1 Src`, `Time Mod2 Src`, and `Attack/Decay1/Decay2/Release Time Mod Int`.
-
-On the Electra One mk2, each of the 5 EGs is rendered using an interactive 2-slot **`dx7envelope` graphical widget** paired with its `Start Level` fader:
-- **Control Set 1 (Rows 1–2):** `EG 1`, `EG 2`, and `EG 3` curve widgets + `Start Level` faders.
-- **Control Set 2 (Rows 3–4):** `EG 4` and `Amp EG` curve widgets + persistent **`Amp EG` Modulation controls** (`Amp Lvl Src`, `Amp Atk/Brk LInt`, `Amp Tm Src1/2`, `Amp Atk/Dc1/Dc2/Rel TInt`).
-- **Control Set 3 (Rows 5–6):** **`Reveal Modulations` Toggle Pad** (`Control 25`) + **`EG Target` Selector** (`Control 26: EG 1..EG 4`) and the 10 dynamic modulation controls (`Controls 27..36`) for the selected `EG 1..4`.
+The **Envelopes** page displays all five envelopes at once as **interactive touch-editable graphs**, plus an expandable **Reveal Modulations** drawer for deep velocity and key-tracking dynamics.
 
 ---
 
-## 2. Z1 Envelope Parameter Mapping (`ExID = 0`)
+## Screen Layout Overview (Default Graphical View)
 
-| Envelope | Shape IDs (`Start..RelLvl`) | Level Mod IDs | Time Mod IDs | Notes |
-|---|---|---|---|---|
-| **EG 1** | `31..39` (9 params) | `40..43` (4 params) | `44..49` (6 params) | Default Filter 1 / Pitch / Model EG. |
-| **EG 2** | `53..61` (9 params) | `62..65` (4 params) | `66..71` (6 params) | Default Filter 2 / Model EG. |
-| **EG 3** | `75..83` (9 params) | `84..87` (4 params) | `88..93` (6 params) | General-purpose Modulation EG. |
-| **EG 4** | `97..105` (9 params) | `106..109` (4 params) | `110..115` (6 params) | General-purpose Modulation EG. |
-| **Amp EG** | `333..340` (8 params; Release Level fixed at `0`) | `342..345` (4 params) | `346..351` (6 params) | Dedicated Amplifier Envelope. |
+```
++-------------------------------------------------+-------------------------------------------------+
+|  ROW 1: EG 1 (Pitch / General)                  |  ROW 1: EG 2 (Filter 1 / General)               |
+|  [  Interactive EG 1 Graph (2 Cols)  ] [Start1] |  [  Interactive EG 2 Graph (2 Cols)  ] [Start2] |
++-------------------------------------------------+-------------------------------------------------+
+|  ROW 2: EG 3 (Filter 2 / General)               |  ROW 2: EG 4 (Auxiliary / General)              |
+|  [  Interactive EG 3 Graph (2 Cols)  ] [Start3] |  [  Interactive EG 4 Graph (2 Cols)  ] [Start4] |
++-------------------------------------------------+-------------------------------------------------+
+|  ROW 3: AMP EG & ENVELOPE MODULATION DRAWER CONTROLS                                              |
+|  [ Interactive Amp EG Graph (2 Cols) ] [AmpSel] [   EG SELECT   ] [Reveal Modulatn]               |
++---------------------------------------------------------------------------------------------------+
+```
+
+---
+
+## 1. Editing the 5 Interactive Envelope Graphs
+
+Each of the five envelope widgets draws the complete multi-stage contour in real time:
+1. **Start Level** *(Dedicated vertical fader immediately to the right of each graph)*: Sets the initial level where the envelope begins at note-on (`-99` to `+99`).
+2. **Attack Time & Attack Level**: How fast the envelope rises (or falls) from the Start Level and the peak level it reaches.
+3. **Decay Time & Break Point Level**: How fast the envelope moves from the Attack peak to the intermediate **Break Point** level.
+4. **Slope Time & Sustain Level**: How fast the envelope travels from the Break Point to the held **Sustain Level** while a key remains pressed.
+5. **Release Time & Release Level**: How fast the envelope finishes after you release the key, and the final target level it lands on (`-99` to `+99`).
+
+### Touch & Knob Editing
+- **Tap & Drag on Any Graph**: Touch any envelope graph on the screen to focus it and drag its stage handles directly, or use the hardware encoders beneath the active envelope to dial in exact stage times and levels.
+- **Amp EG Selector (`Amp 1` / `Amp 2`)**: Selects whether the bottom-left **Amp EG** graph edits Amplifier 1's volume envelope or Amplifier 2's volume envelope.
+
+---
+
+## 2. The Envelope Modulation Drawer (`Reveal Modulations`)
+
+Every Z1 envelope also has extensive expressive modulation parameters that scale its levels and stage times by keyboard velocity, key tracking, or external controllers.
+
+1. Use **EG SELECT** (`EG 1`, `EG 2`, `EG 3`, `EG 4`, `Amp 1 EG`, or `Amp 2 EG`) to choose which envelope's dynamic modulations you want to inspect or edit.
+2. Tap **Reveal Modulations** (Row 3, Column 5) to open the 3-row **Envelope Modulation Drawer** across the lower half of the screen:
+
+| Modulation Row | Controls Revealed | Musical Function |
+| :---: | :--- | :--- |
+| **Row 4** | **Start Vel**, **Attack Vel**, **Break Vel**, **Sustain Vel** | Scales the envelope's Start, Attack, Break, and Sustain levels according to how hard you strike the keys. |
+| **Row 5** | **AtkTm Vel**, **DecTm Vel**, **SlpTm Vel**, **RelTm Vel** | Speeds up or slows down the Attack, Decay, Slope, and Release stage times with keyboard velocity. |
+| **Row 6** | **AtkTm KeyTrk**, **DecTm KeyTrk**, **SlpTm KeyTrk**, **RelTm KeyTrk**, **Time Mod Src & Int** | Makes higher notes decay faster like an acoustic piano (`KeyTrk`), or lets an external controller stretch/compress all envelope times at once. |
+
+Tap **Reveal Modulations** again at any time to close the drawer and return to the full 5-graph view.

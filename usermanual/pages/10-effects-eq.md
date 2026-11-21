@@ -1,44 +1,74 @@
-# Page 10 — Effects (FX1, FX2, Master FX), 2-Band EQ & Persistent FX Preset Manager
+# Page 12: Effects, 2-Band EQ & FX Preset Library (`FX & EQ`)
 
-[⬅ Back to User Manual Index](../README.md)
+At the end of the Korg Z1 voice signal chain, the stereo output passes through a dedicated **2-Band Master EQ**, a versatile **Modulation / Delay / Multi-Effect Processor (`FX 1`)**, and a **Master Reverb / Delay / Spatial Processor (`FX 2`)**.
 
-- **Source Folder:** [`e1/z1-fx/`](../../e1/z1-fx/)
-- **Files:** [`preset.json`](../../e1/z1-fx/preset.json) | [`main.lua`](../../e1/z1-fx/main.lua) | [`main-tests.lua`](../../e1/z1-fx/main-tests.lua)
-- **Z1 Parameters Covered:**
-  - `IDs 356..361` (`ExID = 0`): Effect Send, Send Mod Source/Int, `FX1 Select` (`0..14`), `FX2 Select` (`0..10`), `Master FX Select` (`0..2`)
-  - `IDs 362..365` (`ExID = 0`): 2-Band Equalizer (`Low Freq`, `Low Gain`, `High Freq`, `High Gain`)
-  - `IDs 800..1003` (`ExID = 3`): All **204** active `Effect 1` parameters across **15 algorithms** (`id14 = 6144 + ID`)
-  - `IDs 800..951` (`ExID = 4`): All **152** active `Effect 2` parameters across **11 algorithms** (`id14 = 8192 + ID`)
-  - `IDs 1004..1039` (`ExID = 5`): All **36** active `Master Effect` parameters across **3 algorithms** (`id14 = 10240 + ID`)
-
-> 📸 **[Screenshot Placeholder: `../media/10-effects-eq.png`]**
-> *Add screenshots showing FX1 (`TalkingModulator` or `Amp Sim/Phaser`), FX2, and Master FX (`Stereo Delay` / `Reverb`) views.*
->
-> 🎬 **[Video Placeholder: `../media/10-effects-eq.mp4`]**
-> *Add short video demonstrating `EDIT FX` unit switching, algorithm selection, and `FX PRESET` Save/Recall.*
+The **FX & EQ** page dynamically reconfigures its controls to match whichever effect algorithms are active on **FX 1** and **FX 2**, and includes a built-in **FX Preset Library** that stores both individual algorithm presets and complete **FX Chain** setups.
 
 ---
 
-## 1. Overview
+## Screen Layout Overview
 
-The Korg Z1's effects processor consists of a **2-Band Pre-EQ**, two modulation/insert multi-effects (**Effect 1** with 15 algorithms and **Effect 2** with 11 algorithms), and a spatial **Master Effect** (3 algorithms: `OverDrive/HiGainWah`, `Stereo Delay`, and `Reverb`).
-
-Key features of this page:
-1. **Top-Level Chain & EQ Always Visible (Control Set 1, Rows 1–2):**
-   - Select algorithms for `FX1`, `FX2`, and `Master FX`, adjust `FX Send` + modulation, and shape the `2-Band EQ`.
-2. **`EDIT FX` Selector (`Control 11: FX1 (Mod) / FX2 (Mod) / Master FX`):**
-   - Dynamically morphs the 20 slots in Control Sets 2 & 3 (`Faders 101..120` / `Lists 201..220`) to display the parameters of the selected FX unit and its active algorithm (`ExID = 3`, `4`, or `5`).
-3. **Non-Contiguous `MODSRC2` Support:**
-   - Correctly maps effect dynamic modulation sources that use Korg's non-contiguous **Modulation Source List 2** (`0 = Off`, `11..45 = Note[Linear]..Tempo`) via `overlay:getValueByIndex()`.
-4. **Persistent FX Preset Manager (`Control 12`, `FX PRESET`):**
-   - Allows saving and recalling **3 Per-Unit FX Presets** (`Save Unit 1..3` / `Load Unit 1..3`) and **2 Full FX-Chain Presets** (`Save Chain 1..2` / `Load Chain 1..2`), persisted across reboots via Electra One's `persist()` / `recall()` storage API.
+```
++---------------------------------------------------------------------------------------------------+
+|  ROW 1: EFFECT SWITCHES, ALGORITHM SELECTORS, ACTIVE EDITOR TAB & PRESET DRAWER TOGGLE            |
+|  [  FX1 Switch ] [ FX1 Select  ] [  FX2 Switch ] [ FX2 Select* ] [   EDIT FX   ] [ FX PRESETS  ]  |
++---------------------------------------------------------------------------------------------------+
+|  ROWS 2-4: DYNAMIC PARAMETERS FOR THE CURRENTLY SELECTED "EDIT FX" SECTION                        |
+|  - When EDIT FX = "FX 1": Displays up to 13 tailored controls for the active FX1 algorithm        |
+|  - When EDIT FX = "FX 2": Displays up to 9 tailored controls for the active FX2 algorithm         |
+|  - When EDIT FX = "Master / EQ": Displays FX Send Routing & 2-Band Master Equalizer               |
++---------------------------------------------------------------------------------------------------+
+|  ROWS 5-6: FX PRESET LIBRARY (Visible when "FX PRESETS" is turned ON)                             |
+|  [ Preset List (Cols 1-2, Rows 5-6) ] [   Target    ] [  Name Pos   ] [    Save     ] [    Load     ] |
+|  [  (Black text on teal highlight)  ] [             ] [  Name Char  ] [   Rename    ] [   Delete    ] |
++---------------------------------------------------------------------------------------------------+
+```
+*(\*`FX2 Select` automatically hides whenever an FX1-only double-size algorithm is active.)*
 
 ---
 
-## 2. Supported Effect Algorithms
+## 1. Selecting & Switching Effects (Row 1)
 
-| Unit | `ExID` | `Select` ID | Algorithms |
-|---|:---:|:---:|---|
-| **Effect 1 (`FX1`)** | `3` | `359` (`0..14`) | `0: Off`, `1: St.Comp/Limiter`, `2: Wah`, `3: TalkingModulator`, `4: St.Decimator`, `5: 4Band EQ`, `6: Amp Simulation`, `7: St.Chorus`, `8:HarmonicChorus`, `9: St.Ensemble`, `10: St.Flanger`, `11: St.Phaser`, `12: SmallPhaser`, `13: AutoPan/Tremolo`, `14: RotarySpeaker` |
-| **Effect 2 (`FX2`)** | `4` | `360` (`0..10`) | `0: Off`, `1: St.Comp/Limiter`, `2: Wah`, `3: St.Decimator`, `4: 4Band EQ`, `5: St.Chorus`, `6: St.Flanger`, `7: St.Phaser`, `8: SmallPhaser`, `9: AutoPan/Tremolo`, `10: RotarySpeaker` |
-| **Master FX (`MFX`)** | `5` | `361` (`0..2`) | `0: OverDrive/HiGainWah`, `1: Stereo Delay`, `2: Reverb` |
+- **FX1 Switch (`OFF` / `ON`)**: Bypasses or engages Effect Processor 1.
+- **FX1 Select**: Chooses one of the **15 FX 1 algorithms**:
+  - *Standard Algorithms (1–11)*: `Overdrive`, `Compressor`, `Parametric EQ`, `Chorus`, `Flanger`, `Phaser`, `Tremolo`, `Auto Pan`, `Stereo Delay`, `L/C/R Delay`, `Auto Wah`.
+  - *Double-Size FX1-Only Algorithms (12–15)*: `Talking Modulator`, `Multitap Delay`, `Ensemble`, `Rotary Speaker`.
+- **Automatic FX 2 Hiding for Double-Size Algorithms**: On the Korg Z1 hardware, algorithms 12–15 (`Talking Modulator`, `Multitap Delay`, `Ensemble`, and `Rotary Speaker`) use the full DSP power of both effect blocks and disable FX 2. Whenever you select one of these four algorithms on **FX 1**, the Electra One **automatically hides `FX2 Select`** (and if you were viewing FX 2, switches your view back to FX 1) so you never edit inactive controls.
+- **FX2 Switch (`OFF` / `ON`) & FX2 Select**: Bypasses or engages Effect Processor 2 and chooses from **11 FX 2 algorithms** (`Overdrive` through `Auto Wah`, plus the Z1's lush `Hall Reverb`, `Room Reverb`, and `Stage Reverb` algorithms).
+
+---
+
+## 2. Switching Between `FX 1`, `FX 2` & `Master / EQ` (`EDIT FX`)
+
+Use the **EDIT FX** control (Row 1, Column 5) to choose which section fills the center of the screen (Rows 2–4):
+
+1. **`FX 1`**: Dynamically labels and ranges Rows 2–4 for the currently selected **FX 1** algorithm (for example, showing Vowel combinations and Formant Modulation for `Talking Modulator`, Horn/Rotor speeds for `Rotary Speaker`, or Tap delays and feedback for `Stereo Delay`), including wet/dry **FX1 Balance** and real-time **FX1 Mod Source & Int** (rendered with thin faders for modulation depths).
+2. **`FX 2`**: Dynamically reconfigures Rows 2–4 for the active **FX 2** algorithm (for example, Reverb Time, High Damp, Pre-Delay, ER Level, and wet/dry Balance).
+3. **`Master / EQ`**: Displays the global post-amp routing and master tone shaping controls:
+   - **FX Send**: Routes how the dry/wet voice output feeds into the effect chain.
+   - **2-Band Master EQ**: Adjusts **Low EQ Frequency**, **Low EQ Gain (`-18` to `+18 dB`)**, **High EQ Frequency**, and **High EQ Gain (`-18` to `+18 dB`)** to sculpt the final warmth and air of the patch.
+
+---
+
+## 3. The FX Preset Library (`FX PRESETS` Drawer)
+
+Tap the **FX PRESETS** button in the top-right corner (Row 1, Column 6) to open or close the **FX Preset Library** across Rows 5 and 6.
+
+### Selecting the Preset Target (`Target` Control)
+
+The **Target** selector in Column 3 offers three powerful storage modes:
+
+1. **`FX 1` (8 Slots per FX Algorithm)**:
+   - Displays **8 preset slots specifically for the currently active FX 1 algorithm** (e.g., 8 presets for `Chorus`, 8 presets for `Rotary Speaker`, 8 presets for `Stereo Delay`).
+2. **`FX 2` (8 Slots per FX Algorithm — Shared with FX 1)**:
+   - Displays **8 preset slots for the currently active FX 2 algorithm**.
+   - **Shared Algorithm Pool**: For all 11 algorithms available on both FX 1 and FX 2, the two units share the same 8-slot per-algorithm pool—so a favorite `Chorus`, `Phaser`, or `Stereo Delay` preset saved on FX 1 can be loaded directly onto FX 2!
+3. **`FX Chain` (25 Full-Chain Slots)**:
+   - Displays **25 complete Effect Chain slots (`01`–`25`)**.
+   - Saving an `FX Chain` preset captures **both FX 1 and FX 2 algorithm selections**, **their ON/OFF switches**, **all FX 1 parameters**, **all FX 2 parameters**, **Master FX Send**, and **all 2-Band EQ settings** together in a single slot.
+   - Loading an `FX Chain` preset instantly drops your entire signature production chain (EQ + Modulation/Delay + Reverb) onto any patch you are editing.
+
+### Managing FX Presets
+- **Preset List (Columns 1–2)**: Scroll through the available slots. The active slot is highlighted with a **teal selection bar and black text** for effortless reading.
+- **Name Pos (`1`–`12`) & Name Char**: Select a character position and dial in a custom name for your effect preset.
+- **Save / Rename / Load / Delete**: Save new settings into the selected slot, rename an existing preset, load it directly to the Korg Z1, or clear the slot back to `(Empty)`.

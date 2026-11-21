@@ -330,7 +330,10 @@ function preset.onZ1Param(exId, paramId, z1Val)
             mixState[spec.ch][spec.field] = z1Val
             local disp = (spec.kind == "list") and z1ValToIdx(spec.ov, z1Val) or z1Val
             local c = controls.get(cid)
-            if c then c:getValue("value"):updateValue(disp) end
+            if c then
+                local vo = c:getValue("value")
+                if vo and vo:getValue() ~= disp then vo:updateValue(disp) end
+            end
             repaintMixBuses(spec.bus)
         end
     end
@@ -345,7 +348,10 @@ function preset.onZ1Dump(params)
             mixState[spec.ch][spec.field] = z1Val
             local disp = (spec.kind == "list") and z1ValToIdx(spec.ov, z1Val) or z1Val
             local c = controls.get(cid)
-            if c then c:getValue("value"):updateValue(disp) end
+            if c then
+                local vo = c:getValue("value")
+                if vo and vo:getValue() ~= disp then vo:updateValue(disp) end
+            end
         end
     end
     repaintMixBuses(0)

@@ -66,6 +66,16 @@ overlays = {
             local item = self.items[idx + 1]
             return item and item.value or idx
         end
+        function obj:getLabelByIndex(idx)
+            local item = self.items[idx + 1]
+            return item and item.label
+        end
+        function obj:getIndexByValue(v)
+            for i, it in ipairs(self.items) do
+                if it.value == v then return i - 1 end
+            end
+            return nil
+        end
         overlayStore[id] = obj
         return obj
     end,
@@ -100,12 +110,15 @@ local function makeControl(cid, name, visible, valSpecs)
     function ctrl:isVisible() return self.visible end
     function ctrl:setVisible(v) self.visible = v end
     function ctrl:setColor(c) self.color = c end
+    function ctrl:getColor() return self.color end
     function ctrl:getBounds() return { 0, 0, 146, 56 } end
     function ctrl:repaint()
         if self.paintCb then self.paintCb(self) end
     end
     function ctrl:setPaintCallback(cb) self.paintCb = cb end
     function ctrl:setTouchCallback(cb) self.touchCb = cb end
+    function ctrl:setPotCallback(cb) self.potCb = cb end
+    function ctrl:setSwitchCallback(cb) self.switchCb = cb end
 
     for _, vs in ipairs(valSpecs) do
         local vo = {
@@ -123,7 +136,15 @@ local function makeControl(cid, name, visible, valSpecs)
         function vo:getControl() return self.ctrl end
         function vo:getMessage() return self.msg end
         function vo:setOverlayId(ov) self.ovId = ov end
-        function vo:setRange(_, _, _, _) end
+        function vo:setRange(min, max, def, _)
+            self.min = min
+            self.max = max
+            self.def = def
+        end
+        function vo:getMin() return self.min or 0 end
+        function vo:getMax() return self.max or 127 end
+        function vo:getDefault() return self.def or 0 end
+        function vo:isSet() return self.val ~= nil end
         function vo:getValue() return self.val end
         function vo:updateValue(v)
             self.val = v

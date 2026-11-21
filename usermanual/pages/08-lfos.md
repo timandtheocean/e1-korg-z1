@@ -1,49 +1,64 @@
-# Page 08 — Quad LFOs (LFO 1–4) with Live Custom Waveform Visualizers
+# Page 11: Quad LFOs (`LFO1-4`)
 
-[⬅ Back to User Manual Index](../README.md)
+The Korg Z1 features four independent Low Frequency Oscillators (**LFO 1**, **LFO 2**, **LFO 3**, and **LFO 4**) with 18 waveform shapes, variable starting phase, vertical DC offset, fade-in delay/ramp, key sync, and MIDI clock synchronization.
 
-- **Source Folder:** [`e1/z1-lfo/`](../../e1/z1-lfo/)
-- **Files:** [`preset.json`](../../e1/z1-lfo/preset.json) | [`main.lua`](../../e1/z1-lfo/main.lua) | [`main-tests.lua`](../../e1/z1-lfo/main-tests.lua)
-- **Z1 Parameters Covered:** All **44** `[LFO1]`–`[LFO4]` parameters (`IDs 119..162`, `ExID = 0`) + 4 live custom Lua **LFO Waveform Graph** widgets (`Controls 2, 5, 14, 17`).
-
-> 📸 **[Screenshot Placeholder: `../media/08-lfos.png`]**
-> *Add screenshot of the 4 LFO custom waveform displays rendering different wave shapes, offsets, and fade-in ramps.*
->
-> 🎬 **[Video Placeholder: `../media/08-lfos.mp4`]**
-> *Add short video demonstrating live waveform redrawing as `Wave`, `Offset`, and `FadeIn` are adjusted.*
+The **LFO1-4** page arranges all four LFOs side by side in vertical columns topped by **live custom waveform visualizers**, with a shared **MIDI Sync & Frequency Modulation** inspector at the bottom of the screen.
 
 ---
 
-## 1. Overview
+## Screen Layout Overview
 
-The Korg Z1 includes four LFOs (**LFO 1**–**LFO 4**), each offering **18 waveform shapes** (`Triangle` through `StepTri4/6`), `Frequency`, `Offset` (`-99..+99`), `Fade-In` (`0..99`), `Key Sync` (`OFF`, `Timbre`, `Voice`), `MIDI Tempo Sync` (`Sync SW`, `Base Note`, `Times`), dual Frequency Modulation (`LFO1/2`) or single Frequency Modulation (`LFO3/4`), and Amplitude Modulation (`LFO1/2`).
-
-Each LFO features a custom Lua **Waveform Visualizer Widget** (`paintLfo1..paintLfo4` in [`main.lua`](../../e1/z1-lfo/main.lua)) inspired by `roomi-fields/electraone-widgets` that mathematically synthesizes and draws:
-1. All **18 Korg Z1 LFO wave shapes** (`Triangle`, `Saw Up`, `Saw Down`, `Square1`, `Sine`, `Guitar`, `ExpTri`, `ExpSawUp`, `ExpSawDown`, `Square2`, `Octave`, `Fifth`, `3rd`, `RandomVector`, `Sample&Hold`, `RandomGate`, `StepTri4`, `StepTri6`).
-2. Vertical **Offset** shift (`-99..+99`) relative to the dashed zero-crossing baseline.
-3. Progressive **Fade-In** envelope attenuation (`0..99`) across the left portion of the cycle, plus a header badge showing `SYNC` or `KS` when active.
+```
++------------------------+------------------------+------------------------+------------------------+
+|     LFO 1 (Col 1)      |     LFO 2 (Col 2)      |     LFO 3 (Col 3)      |     LFO 4 (Col 4)      |
++------------------------+------------------------+------------------------+------------------------+
+| [ Live LFO 1 Graph  ]  | [ Live LFO 2 Graph  ]  | [ Live LFO 3 Graph  ]  | [ Live LFO 4 Graph  ]  |
+|   (Tap to select!)     |   (Tap to select!)     |   (Tap to select!)     |   (Tap to select!)     |
+| [   LFO1 Waveform   ]  | [   LFO2 Waveform   ]  | [   LFO3 Waveform   ]  | [   LFO4 Waveform   ]  |
+| [   LFO1 Freq/Spd   ]  | [   LFO2 Freq/Spd   ]  | [   LFO3 Freq/Spd   ]  | [   LFO4 Freq/Spd   ]  |
+| [    LFO1 Offset    ]  | [    LFO2 Offset    ]  | [    LFO3 Offset    ]  | [    LFO4 Offset    ]  |
+| [LFO1 FadeIn Delay  ]  | [LFO2 FadeIn Delay  ]  | [LFO3 FadeIn Delay  ]  | [LFO4 FadeIn Delay  ]  |
++------------------------+------------------------+------------------------+------------------------+
+|                                                 |  COL 5 (Row 2):        |  COL 5 (Row 4):        |
+|                                                 |  [    LFO SELECT    ]  |  [  LFO FadeInTime  ]  |
++-------------------------------------------------+------------------------+------------------------+
+|  ROW 6: SELECTED LFO SYNC, PHASE & SPEED MODULATION                                               |
+|  [  MIDI Sync  ] [  Sync Note  ] [Key SyncMode ] [Freq Mod1Src ] [Freq Mod1Int ] [Freq Mod2Int*] |
++---------------------------------------------------------------------------------------------------+
+```
 
 ---
 
-## 2. Control Layout (34 Controls across 3 Control Sets)
+## 1. Live LFO Waveform Visualizers (Row 1)
 
-### Control Set 1 — LFO 1 & LFO 2 Core + Waveform Visualizers (Rows 1–2)
-- **LFO 1 (Left 3 Columns, Slots `1..3` & `7..9`):**
-  - `[1]` `LFO1 Wave` (`ID 119`, `0..17`), `[2]` **`LFO1 Shape`** *(Custom Graph)*, `[3]` `LFO1 Freq` (`ID 120`, `0..99`)
-  - `[7]` `LFO1 KeySync` (`ID 123`, `OFF/Timbre/Voice`), `[8]` `LFO1 FadeIn` (`ID 122`, `0..99`), `[9]` `LFO1 Offset` (`ID 121`, `-99..+99`)
-- **LFO 2 (Right 3 Columns, Slots `4..6` & `10..12`):**
-  - `[4]` `LFO2 Wave` (`ID 132`, `0..17`), `[5]` **`LFO2 Shape`** *(Custom Graph)*, `[6]` `LFO2 Freq` (`ID 133`, `0..99`)
-  - `[10]` `LFO2 KeySync` (`ID 136`, `OFF/Timbre/Voice`), `[11]` `LFO2 FadeIn` (`ID 135`, `0..99`), `[12]` `LFO2 Offset` (`ID 134`, `-99..+99`)
+At the top of each LFO column is a real-time graphical display that draws the exact shape of that LFO:
+- **All 18 Z1 Wave Shapes Drawn Accurately**: Smoothly renders `Triangle`, `Saw Up`, `Saw Down`, `Square 1`, `Square 2`, `Sine`, `Guitar`, `Exponential Triangle`, `Exp Saw Down`, `Step Triangle 4`, `Step Triangle 6`, `Step Saw 4`, `Step Saw 6`, `Random 1 (S&H)`, `Random 2`, `Random 3`, `Random 4`, and `Random 5`.
+- **Live Vertical Offset Preview**: Adjusting **Offset** (`-99` to `+99`) shifts the waveform vertically above or below the zero-crossing center line on the display, showing whether the LFO modulates symmetrically (`±`) or unipolar-positive/negative.
+- **Live Fade-In Envelope Overlay**: Raising **FadeIn Delay** or **FadeIn Time** draws the gradual amplitude ramp directly over the beginning of the LFO wave so you can see how delayed vibrato or tremolo builds up after a note is played.
+- **Tap Any Graph to Select That LFO**: Simply tap the waveform display at the top of **LFO 1**, **LFO 2**, **LFO 3**, or **LFO 4** to highlight that LFO in bright teal and load its advanced Sync & Speed Modulation controls into Row 6.
 
-### Control Set 2 — LFO 3 & LFO 4 Core + Waveform Visualizers (Rows 3–4)
-- **LFO 3 (Left 3 Columns, Slots `13..15` & `19..21`):**
-  - `[13]` `LFO3 Wave` (`ID 145`, `0..17`), `[14]` **`LFO3 Shape`** *(Custom Graph)*, `[15]` `LFO3 Freq` (`ID 146`, `0..99`)
-  - `[19]` `LFO3 KeySync` (`ID 149`, `OFF/Timbre/Voice`), `[20]` `LFO3 FadeIn` (`ID 148`, `0..99`), `[21]` `LFO3 Offset` (`ID 147`, `-99..+99`)
-- **LFO 4 (Right 3 Columns, Slots `16..18` & `22..24`):**
-  - `[16]` `LFO4 Wave` (`ID 154`, `0..17`), `[17]` **`LFO4 Shape`** *(Custom Graph)*, `[18]` `LFO4 Freq` (`ID 155`, `0..99`)
-  - `[22]` `LFO4 KeySync` (`ID 158`, `OFF/Timbre/Voice`), `[23]` `LFO4 FadeIn` (`ID 157`, `0..99`), `[24]` `LFO4 Offset` (`ID 156`, `-99..+99`)
+---
 
-### Control Set 3 — LFO Selector, MIDI Tempo Sync & Modulation (Rows 5–6)
-- **Slot 25 (`LFO SELECT`):** Selects `LFO 1`, `LFO 2`, `LFO 3`, or `LFO 4` for the shared sync/modulation section.
-- **Slots 26..28 (MIDI Sync):** `MIDI Sync` (`OFF/ON`), `Sync Base` (`r/32`..`r1`), `Sync Time` (`1..16`).
-- **Slots 29..34 (Modulation):** `Freq Mod1 Src/Int` (all 4 LFOs), `Freq Mod2 Src/Int` & `Amp Mod Src/Int` (automatically shown for `LFO 1` and `LFO 2`, hidden for `LFO 3` and `LFO 4` which only have `Freq Mod1` in hardware).
+## 2. Core Per-LFO Controls (Columns 1–4, Rows 2–5)
+
+Each of the four LFOs has immediate dedicated controls for its primary parameters:
+- **Waveform**: Selects one of the 18 LFO waveform shapes.
+- **Freq (`0`–`99`)**: Sets the LFO speed from ultra-slow multi-bar sweeps to audio-rate modulation buzz.
+- **Offset (`-99` to `+99`)**: Biases the LFO cycle upward or downward relative to the base parameter value.
+- **FadeIn Delay (`0`–`99`)**: Holds the LFO silent for a set pause after note-on before the LFO modulation begins to swell in.
+
+---
+
+## 3. Selected LFO Inspector: Fade-In Time, Sync & Speed Modulation (Column 5 & Row 6)
+
+When you tap any LFO's waveform display (or turn **LFO SELECT** in Column 5), the controls in Column 5 and Row 6 automatically bind to the selected LFO:
+
+| Control | Options / Range | Musical Function |
+| :--- | :--- | :--- |
+| **LFO SELECT** | `LFO 1` – `LFO 4` | Selects which LFO is edited by the controls below (synchronized with tapping the 4 LFO graphs). |
+| **LFO FadeInTime** | `0` – `99` | Controls how gradually the selected LFO swells from zero up to full depth after the **FadeIn Delay** expires. |
+| **MIDI Sync** | `OFF` / `ON` | Locks the selected LFO's speed to incoming MIDI Clock tempo *(available on LFO 1 & LFO 2)*. |
+| **Sync Note** | `1/32` to `4/1` (incl. triplets/dotted) | Sets the musical note division when **MIDI Sync** is turned ON. |
+| **Key SyncMode** | `OFF`, `Timbre` (All Voices), `Voice` (Per Key), `0°`, `180°` | Determines whether all notes share one free-running LFO (`OFF`/`Timbre`) or each new note restarts its own LFO phase (`Voice`). |
+| **Freq Mod1Src & Int** | Mod Source / `-99` to `+99` | Dynamically speeds up or slows down the LFO using an envelope, aftertouch, velocity, or performance knob. |
+| **Freq Mod2Src & Int** | Mod Source / `-99` to `+99` | Secondary speed modulation routing *(available on LFO 1 & LFO 2)*. |

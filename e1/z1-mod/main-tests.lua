@@ -36,12 +36,12 @@ test.case("MOD SELECT 0 (OSC1 Pitch/Mod & Pan ModInt) sends IDs 175..187 and 354
     test.turn(12, 0)
     test.turn(201, 0)
     test.turn(102, 0)
-    test.turn(114, 0)
+    test.turn(164, 0)
     test.clear()
 
     test.turn(201, 1)  -- O1 Octave (175 -> pl=2F, pm=01) = 16' (1)
     test.turn(102, -5) -- O1 Semi (176 -> pl=30, pm=01) = -5 (vl=7B, vm=7F)
-    test.turn(114, 40) -- Pan ModInt (354 -> pl=62, pm=02) = +40
+    test.turn(164, 40) -- Pan ModInt (354 -> pl=62, pm=02) = +40 (thin fader 150+14)
 
     local sent = test.sent()
     test.count(sent, 3)

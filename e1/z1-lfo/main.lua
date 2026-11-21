@@ -345,7 +345,8 @@ local function makeWavePainter(lfoIdx)
         end
 
         -- Header label: "LFO1: Sine"
-        local wName = (LFO_WAVES[st.wave + 1] and LFO_WAVES[st.wave + 1].label) or "Wave"
+        local ov = overlays.get(OV.LFO_WAVE)
+        local wName = (ov and ov.getLabelByIndex and ov:getLabelByIndex(st.wave)) or "Wave"
         graphics.setColor(WHITE)
         graphics.print(5, 2, string.format("LFO%d %s", lfoIdx, wName), w - 10, LEFT, REGULAR, SMALL)
     end

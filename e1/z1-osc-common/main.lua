@@ -105,6 +105,7 @@ local OV = {
     OCTAVE       = 2,
     OSC1_TYPE    = 3,
     OSC2_TYPE    = 4,
+    PRESET_TGT   = 5,
     SAW_PULSE    = 10,
     LFO_6_9      = 11,
     CLIP_RESO    = 12,
@@ -135,6 +136,11 @@ local ENUM_DEFS = {
     },
     [OV.OSC1_TYPE] = OSC1_TYPES,
     [OV.OSC2_TYPE] = OSC2_TYPES,
+    [OV.PRESET_TGT] = {
+        { value = 0, label = "OSC 1" },
+        { value = 1, label = "OSC 2" },
+        { value = 2, label = "Both OSCs" },
+    },
     [OV.SAW_PULSE] = {
         { value = 0, label = "SAW" },
         { value = 1, label = "PULSE" },
@@ -604,6 +610,17 @@ local CTRL_PARAM = {
     [34] = 199, -- OSC2 Pitch Mod1 DynamicMod Intensity
 }
 
+local CTRL_OV = {
+    [3]  = OV.OCTAVE,
+    [9]  = OV.OCTAVE,
+    [16] = OV.MODSRC1,
+    [22] = OV.MODSRC1,
+    [25] = OV.MODSRC1,
+    [27] = OV.MODSRC1,
+    [31] = OV.MODSRC1,
+    [33] = OV.MODSRC1,
+}
+
 selectedOsc1Model = 0
 selectedOsc2Model = 0
 lastJumpedPage    = 1
@@ -614,14 +631,11 @@ local activeOsc2SlotDef = {}
 local suppressSlot = {}
 oscSaved = {}
 
-function getOsc1ModelName()
-    local item = OSC1_TYPES[selectedOsc1Model + 1]
-    return item and item.label or "Standard OSC"
-end
-
-function getOsc2ModelName()
-    local item = OSC2_TYPES[selectedOsc2Model + 1]
-    return item and item.label or "Standard OSC"
+function getOscModelName(oscIdx)
+    local isOsc2 = (oscIdx == 2)
+    local sel = isOsc2 and selectedOsc2Model or selectedOsc1Model
+    local ov = overlays.get(isOsc2 and OV.OSC2_TYPE or OV.OSC1_TYPE)
+    return (ov and ov.getLabelByIndex and ov:getLabelByIndex(sel)) or "Standard OSC"
 end
 
 -- ============================================================================
@@ -662,158 +676,159 @@ local function sendParamChange(exId, paramId, signedVal)
 end
 
 -- ============================================================================
--- 3. Custom Paint Callbacks & Dynamic Page Relayout (Pages 2 & 3)
+-- 3. Custom Paint Callback & Dynamic Page Relayout (Pages 2 & 3)
 -- ============================================================================
 
-function paintOsc1Model(control)
+function paintOscModel(control)
+    local isOsc2 = (control:getId() == 8)
     local bounds = control:getBounds()
     local w = bounds[WIDTH]
     local h = bounds[HEIGHT]
     graphics.setColor(0x18202C)
     graphics.fillRect(0, 0, w, h)
-    graphics.setColor(0xF49500)
+    graphics.setColor(isOsc2 and 0x529DEC or 0xF49500)
     graphics.drawRect(0, 0, w, h)
 
-    graphics.setColor(ORANGE)
-    graphics.print(6, 3, string.format("OSC1 MODEL [%02d]", selectedOsc1Model), w - 12, LEFT, REGULAR, SMALL)
+    local sel = isOsc2 and selectedOsc2Model or selectedOsc1Model
+    graphics.setColor(isOsc2 and 0x529DEC or ORANGE)
+    graphics.print(6, 3, string.format("OSC%d MODEL [%02d]", isOsc2 and 2 or 1, sel), w - 12, LEFT, REGULAR, SMALL)
 
     graphics.setColor(WHITE)
-    graphics.print(6, 23, getOsc1ModelName(), w - 12, LEFT, BOLD, MEDIUM)
-end
-
-function paintOsc2Model(control)
-    local bounds = control:getBounds()
-    local w = bounds[WIDTH]
-    local h = bounds[HEIGHT]
-    graphics.setColor(0x18202C)
-    graphics.fillRect(0, 0, w, h)
-    graphics.setColor(0x529DEC)
-    graphics.drawRect(0, 0, w, h)
-
-    graphics.setColor(0x529DEC)
-    graphics.print(6, 3, string.format("OSC2 MODEL [%02d]", selectedOsc2Model), w - 12, LEFT, REGULAR, SMALL)
-
-    graphics.setColor(WHITE)
-    graphics.print(6, 23, getOsc2ModelName(), w - 12, LEFT, BOLD, MEDIUM)
+    graphics.print(6, 23, getOscModelName(isOsc2 and 2 or 1), w - 12, LEFT, BOLD, MEDIUM)
 end
 
 local function repaintModelWidgets()
-    local c1 = preset.getControl(2)
-    if c1 then
-        c1:repaint()
-    end
-    local c2 = preset.getControl(8)
-    if c2 then
-        c2:repaint()
+    for _, cid in ipairs({ 2, 8 }) do
+        local c = preset.getControl(cid)
+        if c then c:repaint() end
     end
 end
 
-local function applyDynamicOscPage(pageId, grpId, prefix, modelName, defs, exId, faderBase, listBase, slotDefMap)
+local function applyDynamicSlots(defs, slotFrom, slotTo, slotOffset, faderBase, listBase, slotDefMap, saved, keyShift, suppress)
+    for slot = slotFrom, slotTo do
+        local def = defs[slot - slotOffset]
+        local fid = faderBase + slot
+        local tfid = faderBase + 50 + slot
+        local lid = listBase + slot
+        local fader = controls.get(fid)
+        local thin  = controls.get(tfid)
+        local list  = controls.get(lid)
+        if fader and list then
+            if not def then
+                if fader:isVisible() then fader:setVisible(false) end
+                if thin and thin:isVisible() then thin:setVisible(false) end
+                if list:isVisible() then list:setVisible(false) end
+            elseif def.kind == "list" then
+                slotDefMap[slot] = def
+                if fader:isVisible() then fader:setVisible(false) end
+                if thin and thin:isVisible() then thin:setVisible(false) end
+                local key = keyShift and ((keyShift << 11) | def.id) or def.id
+                local initVal = saved[key]
+                if initVal == nil then initVal = def.defVal or 0 end
+                local vo = list:getValue("value")
+                vo:setOverlayId(def.ov)
+                if vo:getValue() ~= initVal then
+                    suppress[lid] = true
+                    vo:updateValue(initVal)
+                    suppress[lid] = nil
+                end
+                if list:getName() ~= def.name then list:setName(def.name) end
+                local col = def.color or PURPLE
+                if list:getColor() ~= col then list:setColor(col) end
+                if not list:isVisible() then list:setVisible(true) end
+            else
+                slotDefMap[slot] = def
+                if list:isVisible() then list:setVisible(false) end
+                local useThin = (thin ~= nil and def.name ~= nil and def.name:find("Int", 1, true) ~= nil)
+                local activeFader = useThin and thin or fader
+                local activeFid   = useThin and tfid or fid
+                local otherFader  = useThin and fader or thin
+                if otherFader and otherFader:isVisible() then otherFader:setVisible(false) end
+                local key = keyShift and ((keyShift << 11) | def.id) or def.id
+                local neutral = def.defVal
+                if neutral == nil then
+                    neutral = (def.min < 0 and def.max > 0) and 0 or def.min
+                end
+                local initVal = saved[key]
+                if initVal == nil then initVal = neutral end
+                local vo = activeFader:getValue("value")
+                if vo:getMin() ~= def.min or vo:getMax() ~= def.max or vo:getDefault() ~= neutral then
+                    vo:getMessage():setRange(0, def.max - def.min)
+                    vo:setRange(def.min, def.max, neutral, false)
+                end
+                if vo:getValue() ~= initVal then
+                    suppress[activeFid] = true
+                    vo:updateValue(initVal)
+                    suppress[activeFid] = nil
+                end
+                if activeFader:getName() ~= def.name then activeFader:setName(def.name) end
+                local col = def.color or WHITE
+                if activeFader:getColor() ~= col then activeFader:setColor(col) end
+                if not activeFader:isVisible() then activeFader:setVisible(true) end
+            end
+        end
+    end
+end
+
+function applyOscModel(oscIdx, modelIdx)
+    local isOsc2 = (oscIdx == 2)
+    local models = isOsc2 and OSC2_MODELS or OSC1_MODELS
+    local defs = models[modelIdx]
     if not defs then
         return
     end
+    if isOsc2 then
+        selectedOsc2Model = modelIdx
+    else
+        selectedOsc1Model = modelIdx
+    end
+    suppressModelCallback = true
+    for _, cid in ipairs(isOsc2 and { 8, 601 } or { 2, 301 }) do
+        local c = controls.get(cid)
+        if c then c:getValue("value"):updateValue(modelIdx) end
+    end
+    suppressModelCallback = false
+
+    local pageId     = isOsc2 and OSC2_PAGE_ID or OSC1_PAGE_ID
+    local grpId      = isOsc2 and 70 or 60
+    local prefix     = isOsc2 and "OSC2" or "OSC1"
+    local faderBase  = isOsc2 and 700 or 400
+    local listBase   = isOsc2 and 800 or 500
+    local slotDefMap = isOsc2 and activeOsc2SlotDef or activeOsc1SlotDef
     for k in pairs(slotDefMap) do
         slotDefMap[k] = nil
     end
     if window and window.stop then
         window.stop()
     end
-    local header = prefix .. " - " .. modelName
+    local header = prefix .. " - " .. getOscModelName(oscIdx)
     if pages and pages.get then
         local pg = pages.get(pageId)
-        if pg and pg.setName then
+        if pg and pg.setName and (not pg.getName or pg:getName() ~= header) then
             pg:setName(header)
         end
     end
     local grp = preset.getGroup(grpId)
-    if grp then
+    if grp and (not grp.getLabel or grp:getLabel() ~= header) then
         grp:setLabel(header)
     end
 
-    for slot = 3, 36 do
-        local def = defs[slot - 2]
-        local fid = faderBase + slot
-        local lid = listBase + slot
-        local fader = controls.get(fid)
-        local list  = controls.get(lid)
-        if fader and list then
-            if not def then
-                fader:setVisible(false)
-                list:setVisible(false)
-            elseif def.kind == "list" then
-                slotDefMap[slot] = def
-                fader:setVisible(false)
-                local key = (exId << 11) | def.id
-                local initVal = oscSaved[key] or 0
-                local valObj = list:getValue("value")
-                valObj:setOverlayId(def.ov)
-                suppressSlot[lid] = true
-                valObj:updateValue(initVal)
-                suppressSlot[lid] = nil
-                list:setName(def.name)
-                list:setColor(def.color or PURPLE)
-                list:setVisible(true)
-            else
-                slotDefMap[slot] = def
-                list:setVisible(false)
-                local key = (exId << 11) | def.id
-                local neutral = (def.min < 0 and def.max > 0) and 0 or def.min
-                local initVal = oscSaved[key]
-                if initVal == nil then initVal = neutral end
-                local valObj = fader:getValue("value")
-                local span = def.max - def.min
-                valObj:getMessage():setRange(0, span)
-                valObj:setRange(def.min, def.max, neutral, false)
-                suppressSlot[fid] = true
-                valObj:updateValue(initVal)
-                suppressSlot[fid] = nil
-                fader:setName(def.name)
-                fader:setColor(def.color or WHITE)
-                fader:setVisible(true)
-            end
-        end
-    end
+    applyDynamicSlots(defs, 3, 36, 2, faderBase, listBase, slotDefMap, oscSaved, oscIdx, suppressSlot)
     if window and window.resume then
         window.resume()
     end
-end
-
-function applyOsc1Model(modelIdx)
-    if not OSC1_MODELS[modelIdx] then
-        return
-    end
-    selectedOsc1Model = modelIdx
-    suppressModelCallback = true
-    local c2 = controls.get(2)
-    if c2 then c2:getValue("value"):updateValue(modelIdx) end
-    local c301 = controls.get(301)
-    if c301 then c301:getValue("value"):updateValue(modelIdx) end
-    suppressModelCallback = false
-    applyDynamicOscPage(OSC1_PAGE_ID, 60, "OSC1", getOsc1ModelName(), OSC1_MODELS[modelIdx], 1, 400, 500, activeOsc1SlotDef)
     repaintModelWidgets()
-end
-
-function applyOsc2Model(modelIdx)
-    if not OSC2_MODELS[modelIdx] then
-        return
+    if oscPresetView and showOscPresetManager then
+        showOscPresetManager()
     end
-    selectedOsc2Model = modelIdx
-    suppressModelCallback = true
-    local c8 = controls.get(8)
-    if c8 then c8:getValue("value"):updateValue(modelIdx) end
-    local c601 = controls.get(601)
-    if c601 then c601:getValue("value"):updateValue(modelIdx) end
-    suppressModelCallback = false
-    applyDynamicOscPage(OSC2_PAGE_ID, 70, "OSC2", getOsc2ModelName(), OSC2_MODELS[modelIdx], 2, 700, 800, activeOsc2SlotDef)
-    repaintModelWidgets()
 end
 
 function setOscModelsFromDump(osc1Type, osc2Type)
     if type(osc1Type) == "number" and osc1Type >= 0 and osc1Type <= 12 then
-        applyOsc1Model(osc1Type)
+        applyOscModel(1, osc1Type)
     end
     if type(osc2Type) == "number" and osc2Type >= 0 and osc2Type <= 8 then
-        applyOsc2Model(osc2Type)
+        applyOscModel(2, osc2Type)
     end
 end
 
@@ -838,117 +853,80 @@ function fmtNote(_valueObject, value)
     return string.format("%s%d", n, oct)
 end
 
-local function fmtModelSlot(slotDefMap, valueObject, value)
-    local ctrlId = valueObject:getControl():getId()
-    local slot = ctrlId % 100
-    local def = slotDefMap[slot]
+local function formatSlotValue(def, value)
     local v = math.floor(value)
-    if not def or not def.fmt then
-        return tostring(v)
-    end
-    if def.fmt == "plus1" then
-        return tostring(v + 1)
-    elseif def.fmt == "coarse" then
-        return v == 0 and "0.5" or tostring(v)
-    elseif def.fmt == "offneg" then
-        return v < 0 and "OFF" or tostring(v)
-    elseif def.fmt == "db" then
-        return string.format("%+d dB", v)
-    elseif def.fmt == "note" then
-        return fmtNote(valueObject, v)
+    local fmt = def and def.fmt
+    if not fmt then return tostring(v)
+    elseif fmt == "dbhalf" then return string.format("%+.1f dB", v * 0.5)
+    elseif fmt == "db" then return string.format("%+d dB", v)
+    elseif fmt == "plus1" then return tostring(v + 1)
+    elseif fmt == "hz10" then return string.format("%+.1f Hz", v / 10.0)
+    elseif fmt == "slope" then return string.format("%+.2f", v / 50.0)
+    elseif fmt == "coarse" then return (v == 0) and "0.5" or tostring(v)
+    elseif fmt == "offneg" then return (v < 0) and "OFF" or tostring(v)
+    elseif fmt == "note" and fmtNote then return fmtNote(nil, v)
     end
     return tostring(v)
 end
 
-function fmtOsc1Slot(valueObject, value)
-    return fmtModelSlot(activeOsc1SlotDef, valueObject, value)
+function fmtOscSlot(valueObject, value)
+    local ctrlId = valueObject:getControl():getId()
+    local slotDefMap = (ctrlId >= 600) and activeOsc2SlotDef or activeOsc1SlotDef
+    return formatSlotValue(slotDefMap[ctrlId % 50], value)
 end
 
-function fmtOsc2Slot(valueObject, value)
-    return fmtModelSlot(activeOsc2SlotDef, valueObject, value)
-end
-
-local function jumpToPage(valueObject, value, targetPageId, label)
-    if suppressJumpPad then
+function onJumpPage(valueObject, value)
+    if suppressJumpPad or math.floor(value) <= 0 then
         return
     end
-    if math.floor(value) > 0 then
-        suppressJumpPad = true
-        if valueObject and valueObject.updateValue then
-            valueObject:updateValue(0)
+    suppressJumpPad = true
+    if valueObject and valueObject.updateValue then
+        valueObject:updateValue(0)
+    end
+    suppressJumpPad = false
+    local ctrlId = valueObject:getControl():getId()
+    local targetPageId, label
+    if ctrlId == 1 then
+        targetPageId = OSC1_PAGE_ID
+        label = "Jump -> OSC 1 (" .. getOscModelName(1) .. ")"
+    elseif ctrlId == 7 then
+        targetPageId = OSC2_PAGE_ID
+        label = "Jump -> OSC 2 (" .. getOscModelName(2) .. ")"
+    else
+        targetPageId = OSC_COMMON_PAGE_ID
+        label = "Jump -> OSC Common"
+    end
+    lastJumpedPage = targetPageId
+    if pages and pages.display then
+        pages.display(targetPageId)
+    end
+    info.setText(label)
+end
+
+function onOscType(valueObject, value)
+    if suppressModelCallback then
+        return
+    end
+    local ctrlId = valueObject:getControl():getId()
+    local isOsc2 = (ctrlId == 8 or ctrlId == 601)
+    local oscIdx = isOsc2 and 2 or 1
+    local maxType = isOsc2 and 8 or 12
+    local v = math.floor(value)
+    if ctrlId == 301 or ctrlId == 601 then
+        local ov = overlays.get(isOsc2 and OV.OSC2_TYPE or OV.OSC1_TYPE)
+        v = (ov and ov:getValueByIndex(v)) or v
+        if v < 0 or v > maxType then
+            return
         end
-        suppressJumpPad = false
-        lastJumpedPage = targetPageId
-        if pages and pages.display then
-            pages.display(targetPageId)
-        end
-        info.setText(label)
+    else
+        v = math.max(0, math.min(maxType, v))
     end
+    sendParamChange(0, isOsc2 and 188 or 174, v)
+    applyOscModel(oscIdx, v)
+    info.setText("OSC" .. oscIdx .. ": " .. getOscModelName(oscIdx))
 end
 
-function onJumpOsc1(valueObject, value)
-    jumpToPage(valueObject, value, OSC1_PAGE_ID, "Jump -> OSC 1 (" .. getOsc1ModelName() .. ")")
-end
-
-function onJumpOsc2(valueObject, value)
-    jumpToPage(valueObject, value, OSC2_PAGE_ID, "Jump -> OSC 2 (" .. getOsc2ModelName() .. ")")
-end
-
-function onJumpOscCommon(valueObject, value)
-    jumpToPage(valueObject, value, OSC_COMMON_PAGE_ID, "Jump -> OSC Common")
-end
-
-function onOsc1Model(_valueObject, value)
-    if suppressModelCallback then
-        return
-    end
-    local v = math.max(0, math.min(12, math.floor(value)))
-    sendParamChange(0, 174, v)
-    applyOsc1Model(v)
-    info.setText("OSC1: " .. getOsc1ModelName())
-end
-
-function onOsc2Model(_valueObject, value)
-    if suppressModelCallback then
-        return
-    end
-    local v = math.max(0, math.min(8, math.floor(value)))
-    sendParamChange(0, 188, v)
-    applyOsc2Model(v)
-    info.setText("OSC2: " .. getOsc2ModelName())
-end
-
-function onOsc1Type(_valueObject, value)
-    if suppressModelCallback then
-        return
-    end
-    local idx = math.floor(value)
-    local ov = overlays.get(OV.OSC1_TYPE)
-    local z1Type = (ov and ov:getValueByIndex(idx)) or idx
-    if z1Type < 0 or z1Type > 12 then
-        return
-    end
-    sendParamChange(0, 174, z1Type)
-    applyOsc1Model(z1Type)
-    info.setText("OSC1: " .. getOsc1ModelName())
-end
-
-function onOsc2Type(_valueObject, value)
-    if suppressModelCallback then
-        return
-    end
-    local idx = math.floor(value)
-    local ov = overlays.get(OV.OSC2_TYPE)
-    local z1Type = (ov and ov:getValueByIndex(idx)) or idx
-    if z1Type < 0 or z1Type > 8 then
-        return
-    end
-    sendParamChange(0, 188, z1Type)
-    applyOsc2Model(z1Type)
-    info.setText("OSC2: " .. getOsc2ModelName())
-end
-
-local function handleDynamicSlot(exId, slotDefMap, valueObject, value)
+function onOscSlot(valueObject, value)
     local ctrl = valueObject:getControl()
     local ctrlId = ctrl:getId()
     if suppressSlot[ctrlId] then
@@ -958,14 +936,15 @@ local function handleDynamicSlot(exId, slotDefMap, valueObject, value)
     if not ctrl:isVisible() then
         return
     end
-    local slot = ctrlId % 100
-    local def = slotDefMap[slot]
+    local isOsc2 = (ctrlId >= 600)
+    local exId = isOsc2 and 2 or 1
+    local slotDefMap = isOsc2 and activeOsc2SlotDef or activeOsc1SlotDef
+    local def = slotDefMap[ctrlId % 50]
     if not def then
         return
     end
     local rawVal = math.floor(value)
-    local key = (exId << 11) | def.id
-    oscSaved[key] = rawVal
+    oscSaved[(exId << 11) | def.id] = rawVal
 
     local z1Val = rawVal
     if def.kind == "list" then
@@ -975,83 +954,142 @@ local function handleDynamicSlot(exId, slotDefMap, valueObject, value)
     sendParamChange(exId, def.id, z1Val)
 end
 
-function onOsc1Slot(valueObject, value)
-    handleDynamicSlot(1, activeOsc1SlotDef, valueObject, value)
-end
-
-function onOsc2Slot(valueObject, value)
-    handleDynamicSlot(2, activeOsc2SlotDef, valueObject, value)
-end
-
-function onOctave(valueObject, value)
-    local ctrlId = valueObject:getControl():getId()
-    local paramId = CTRL_PARAM[ctrlId]
-    if not paramId then
-        return
-    end
-    local idx = math.floor(value)
-    local ov = overlays.get(OV.OCTAVE)
-    local z1Val = (ov and ov:getValueByIndex(idx)) or idx
-    sendParamChange(0, paramId, z1Val)
-end
-
-function onModSrc1(valueObject, value)
-    local ctrlId = valueObject:getControl():getId()
-    local paramId = CTRL_PARAM[ctrlId]
-    if not paramId then
-        return
-    end
-    local idx = math.floor(value)
-    local ov = overlays.get(OV.MODSRC1)
-    local z1Val = (ov and ov:getValueByIndex(idx)) or idx
-    sendParamChange(0, paramId, z1Val)
-end
+local COMMON_CTRLS = {
+    [1] = { 3, 4, 5, 6, 13, 14, 15, 16, 17, 25, 26, 27, 28 },
+    [2] = { 9, 10, 11, 12, 19, 20, 21, 22, 23, 31, 32, 33, 34 },
+}
+local COMMON_DEF_VAL = {
+    [3] = 2, [4] = 0, [5] = 0, [6] = 0, [13] = 60, [14] = 0, [15] = 0, [16] = 0, [17] = 0, [25] = 0, [26] = 0, [27] = 0, [28] = 0,
+    [9] = 2, [10] = 0, [11] = 0, [12] = 0, [19] = 60, [20] = 0, [21] = 0, [22] = 0, [23] = 0, [31] = 0, [32] = 0, [33] = 0, [34] = 0,
+}
+commonSaved = {}
+for cid, dv in pairs(COMMON_DEF_VAL) do commonSaved[cid] = dv end
 
 function onParam(valueObject, value)
+    if suppressOscPreset then return end
     local ctrlId = valueObject:getControl():getId()
     local paramId = CTRL_PARAM[ctrlId]
     if not paramId then
         return
     end
-    sendParamChange(0, paramId, math.floor(value))
+    local z1Val = math.floor(value)
+    local ovId = CTRL_OV[ctrlId]
+    if ovId then
+        local ov = overlays.get(ovId)
+        z1Val = (ov and ov:getValueByIndex(z1Val)) or z1Val
+    end
+    commonSaved[ctrlId] = z1Val
+    sendParamChange(0, paramId, z1Val)
 end
 
 -- ============================================================================
--- 5. Lifecycle Hooks
+-- 4b. Named OSC Preset Library (OSC 1 per-type, OSC 2 per-type, & Both OSCs)
 -- ============================================================================
 
-function preset.onLoad()
-    suppressModelCallback = true
-    for ovId, items in pairs(ENUM_DEFS) do
-        overlays.create(ovId, items)
+OSC_UNIT_PRESET_SLOTS = 8
+OSC_DUAL_PRESET_SLOTS = 25
+OSC_COMMON_CS3_CTRLS  = { 25, 26, 27, 28, 31, 32, 33, 34 }
+OSC_PRESET_CTRLS      = { 35, 36, 37, 38, 39, 40, 41, 42, 43 }
+
+z1PersistLib = _G.z1PersistLib or { version = 2, unit = {}, chain = {}, tuning = {}, oscUnit = {}, oscDual = {} }
+_G.z1PersistLib = z1PersistLib
+z1PersistLib.oscUnit = z1PersistLib.oscUnit or {}
+z1PersistLib.oscDual = z1PersistLib.oscDual or {}
+
+oscPresetView    = false
+oscPresetTarget  = 0 -- 0 = OSC 1 (selected OSC1 type), 1 = OSC 2 (selected OSC2 type), 2 = Both OSCs
+oscPresetSlot    = 1
+oscPresetNamePos = 1
+oscPresetName    = {}
+suppressOscPreset = false
+local shownOscPresetBank = nil
+local pendingOscDelete   = nil
+
+function getProgramNameString(charsTable, trim)
+    local src = charsTable or programNameChars
+    local chars = {}
+    for i = 1, 16 do
+        local c = src[i] or 0x20
+        if c < 0x20 or c > 0x7F then
+            c = 0x20
+        end
+        chars[i] = string.char(c)
     end
-    local c1 = preset.getControl(2)
-    if c1 then
-        c1:setPaintCallback(paintOsc1Model)
-    end
-    local c2 = preset.getControl(8)
-    if c2 then
-        c2:setPaintCallback(paintOsc2Model)
+    local s = table.concat(chars)
+    return trim and (s:gsub("%s+$", "")) or s
+end
+
+function setNameCharsBuffer(dst, src, maxAscii)
+    local hi = maxAscii or 0x7F
+    local isStr = (type(src) == "string")
+    local isTbl = (type(src) == "table")
+    for i = 1, 16 do
+        local b = isStr and string.byte(src, i) or (isTbl and src[i]) or 0x20
+        if type(b) ~= "number" or b < 0x20 or b > hi then
+            b = 0x20
+        end
+        dst[i] = b
     end
 end
 
-function preset.onReady()
-    suppressModelCallback = false
-    for _, cid in ipairs({ 3, 9 }) do
-        local c = controls.get(cid)
-        if c then c:getValue("value"):setOverlayId(OV.OCTAVE) end
+function fmtAsciiChar(_valueObject, value)
+    local v = math.floor(value)
+    if v < 0x20 or v > 0x7F then
+        v = 0x20
     end
-    for _, cid in ipairs({ 16, 22, 25, 27, 31, 33 }) do
-        local c = controls.get(cid)
-        if c then c:getValue("value"):setOverlayId(OV.MODSRC1) end
+    if v == 0x20 then
+        return "SPC (32)"
+    elseif v == 0x7F then
+        return "DEL (127)"
     end
-    local c301 = controls.get(301)
-    if c301 then c301:getValue("value"):setOverlayId(OV.OSC1_TYPE) end
-    local c601 = controls.get(601)
-    if c601 then c601:getValue("value"):setOverlayId(OV.OSC2_TYPE) end
-    applyOsc1Model(0)
-    applyOsc2Model(0)
-    info.setText("Z1 OSC Common Ready")
+    return string.format("'%s' (%d)", string.char(v), v)
+end
+
+local function oscPresetBankKey()
+    if oscPresetTarget == 2 then return "dual" end
+    local modelIdx = (oscPresetTarget == 1) and selectedOsc2Model or selectedOsc1Model
+    return "osc" .. tostring(modelIdx or 0)
+end
+
+local function oscPresetSlotCount()
+    return (oscPresetTarget == 2) and OSC_DUAL_PRESET_SLOTS or OSC_UNIT_PRESET_SLOTS
+end
+
+local function getOscPresetEntry(slot)
+    local key = "s" .. tostring(slot)
+    if oscPresetTarget == 2 then
+        return z1PersistLib.oscDual[key]
+    end
+    local bank = z1PersistLib.oscUnit[oscPresetBankKey()]
+    return (type(bank) == "table") and bank[key] or nil
+end
+
+local function setOscPresetEntry(slot, entry)
+    local key = "s" .. tostring(slot)
+    if oscPresetTarget == 2 then
+        z1PersistLib.oscDual[key] = entry
+    else
+        local bk = oscPresetBankKey()
+        if type(z1PersistLib.oscUnit[bk]) ~= "table" then z1PersistLib.oscUnit[bk] = {} end
+        z1PersistLib.oscUnit[bk][key] = entry
+    end
+end
+
+local function defaultOscPresetName(slot)
+    if oscPresetTarget == 2 then
+        return string.format("Dual OSC %02d", slot)
+    end
+    local mName = getOscModelName(oscPresetTarget + 1)
+    return string.format("%s %d", string.sub(mName, 1, 13), slot)
+end
+
+local function oscPresetHeader()
+    if oscPresetTarget == 2 then
+        return string.format("BOTH OSC1+OSC2 PRESETS (%d)", OSC_DUAL_PRESET_SLOTS)
+    end
+    local oscIdx = oscPresetTarget + 1
+    return string.format("OSC%d %s PRESETS (%d)",
+        oscIdx, string.upper(getOscModelName(oscIdx)), OSC_UNIT_PRESET_SLOTS)
 end
 
 local function z1ValToIdx(ovId, z1Val)
@@ -1071,17 +1109,400 @@ local function z1ValToIdx(ovId, z1Val)
     return z1Val
 end
 
+local function defaultOscDefRaw(def)
+    if def.kind == "list" then return 0 end
+    return (def.min < 0 and def.max > 0) and 0 or def.min
+end
+
+local function captureOscCommon(oscIdx)
+    local out = {}
+    for i, cid in ipairs(COMMON_CTRLS[oscIdx]) do
+        out[i] = commonSaved[cid] or COMMON_DEF_VAL[cid] or 0
+    end
+    return out
+end
+
+local function applyOscCommon(oscIdx, vals)
+    if type(vals) ~= "table" then return end
+    for i, cid in ipairs(COMMON_CTRLS[oscIdx]) do
+        local z1Val = vals[i]
+        if type(z1Val) == "number" then
+            commonSaved[cid] = z1Val
+            local pid = CTRL_PARAM[cid]
+            if pid then sendParamChange(0, pid, z1Val) end
+            local c = controls.get(cid)
+            if c then
+                local ovId = CTRL_OV[cid]
+                local disp = ovId and z1ValToIdx(ovId, z1Val) or z1Val
+                suppressOscPreset = true
+                c:getValue("value"):updateValue(disp)
+                suppressOscPreset = false
+            end
+        end
+    end
+end
+
+local function captureOscUnitValues(oscIdx, modelIdx)
+    local models = (oscIdx == 2) and OSC2_MODELS or OSC1_MODELS
+    local defs = models[modelIdx] or {}
+    local v = {}
+    for i, d in ipairs(defs) do
+        local raw = oscSaved[(oscIdx << 11) | d.id]
+        if raw == nil then raw = defaultOscDefRaw(d) end
+        if d.kind == "list" then
+            local ov = overlays.get(d.ov)
+            v[i] = (ov and ov:getValueByIndex(raw)) or raw
+        else
+            v[i] = raw
+        end
+    end
+    return v
+end
+
+local function applyOscUnitValues(oscIdx, modelIdx, v)
+    local models = (oscIdx == 2) and OSC2_MODELS or OSC1_MODELS
+    local defs = models[modelIdx] or {}
+    for i, d in ipairs(defs) do
+        local z1Val = (type(v) == "table") and v[i] or nil
+        if type(z1Val) == "number" then
+            local raw = (d.kind == "list") and z1ValToIdx(d.ov, z1Val) or z1Val
+            oscSaved[(oscIdx << 11) | d.id] = raw
+            sendParamChange(oscIdx, d.id, z1Val)
+        end
+    end
+    applyOscModel(oscIdx, modelIdx)
+end
+
+local function repaintOscPresetList()
+    if not oscPresetView then return end
+    local c = preset.getControl(37)
+    if c then c:repaint() end
+end
+
+local function syncOscNameChar()
+    local c = controls.get(41)
+    if c then
+        suppressOscPreset = true
+        c:getValue("value"):updateValue(oscPresetName[oscPresetNamePos] or 0x20)
+        suppressOscPreset = false
+    end
+end
+
+local function selectOscPresetSlot(slot)
+    local n = oscPresetSlotCount()
+    oscPresetSlot = math.max(1, math.min(n, slot))
+    pendingOscDelete = nil
+    local e = getOscPresetEntry(oscPresetSlot)
+    setNameCharsBuffer(oscPresetName, (e and e.name) or defaultOscPresetName(oscPresetSlot), 0x7E)
+    syncOscNameChar()
+    repaintOscPresetList()
+end
+
+function showOscPresetManager()
+    window.stop()
+    for _, cid in ipairs(OSC_COMMON_CS3_CTRLS) do
+        local c = controls.get(cid)
+        if c and c:isVisible() then c:setVisible(false) end
+    end
+    for _, cid in ipairs(OSC_PRESET_CTRLS) do
+        local c = controls.get(cid)
+        if c and not c:isVisible() then c:setVisible(true) end
+    end
+    local grp3 = preset.getGroup(52)
+    if grp3 then grp3:setLabel("OSC PRESET LIBRARY - " .. oscPresetHeader()) end
+
+    local n = oscPresetSlotCount()
+    local slotCtrl = controls.get(36)
+    if slotCtrl then
+        local vo = slotCtrl:getValue("value")
+        vo:getMessage():setRange(0, n - 1)
+        vo:setRange(1, n, 1, false)
+    end
+    local bank = oscPresetBankKey()
+    if bank ~= shownOscPresetBank then
+        shownOscPresetBank = bank
+        selectOscPresetSlot(oscPresetSlot)
+    end
+    suppressOscPreset = true
+    if slotCtrl then slotCtrl:getValue("value"):updateValue(oscPresetSlot) end
+    local tgt = controls.get(35)
+    if tgt then tgt:getValue("value"):updateValue(oscPresetTarget) end
+    local posCtrl = controls.get(40)
+    if posCtrl then posCtrl:getValue("value"):updateValue(oscPresetNamePos) end
+    suppressOscPreset = false
+    syncOscNameChar()
+    repaintOscPresetList()
+    window.resume()
+end
+
+function setOscPresetView(on)
+    oscPresetView = on and true or false
+    pendingOscDelete = nil
+    local pad = controls.get(24)
+    if pad then
+        suppressOscPreset = true
+        pad:getValue("value"):updateValue(oscPresetView and 1 or 0)
+        suppressOscPreset = false
+    end
+    if oscPresetView then
+        showOscPresetManager()
+        return
+    end
+    window.stop()
+    for _, cid in ipairs(OSC_PRESET_CTRLS) do
+        local c = controls.get(cid)
+        if c and c:isVisible() then c:setVisible(false) end
+    end
+    for _, cid in ipairs(OSC_COMMON_CS3_CTRLS) do
+        local c = controls.get(cid)
+        if c and not c:isVisible() then c:setVisible(true) end
+    end
+    local grp3 = preset.getGroup(52)
+    if grp3 then grp3:setLabel("OSC 1 & OSC 2 - PITCH MODULATION 1 & DYNAMIC CONTROLLER") end
+    window.resume()
+end
+
+function paintOscPresetList(control)
+    local b = control:getBounds()
+    local w, h = b[WIDTH], b[HEIGHT]
+    graphics.setColor(0x18202C)
+    graphics.fillRect(0, 0, w, h)
+    graphics.setColor(0x03A598)
+    graphics.drawRect(0, 0, w, h)
+
+    graphics.setColor(ORANGE)
+    graphics.print(6, 3, oscPresetHeader(), w - 12, LEFT)
+
+    local chars = {}
+    for i = 1, 16 do
+        local ch = string.char(oscPresetName[i] or 0x20)
+        chars[i] = (i == oscPresetNamePos) and ("[" .. ch .. "]") or ch
+    end
+    graphics.setColor(WHITE)
+    graphics.print(6, 21, "Name: " .. table.concat(chars), w - 12, LEFT)
+
+    local n = oscPresetSlotCount()
+    local rows = 6
+    local first = math.max(1, math.min(oscPresetSlot - 2, n - rows + 1))
+    for r = 0, rows - 1 do
+        local s = first + r
+        if s > n then break end
+        local y = 40 + r * 17
+        local e = getOscPresetEntry(s)
+        if s == oscPresetSlot then
+            graphics.setColor(0x03A598)
+            graphics.fillRect(2, y - 1, w - 4, 17)
+            graphics.setColor(0x000000)
+        else
+            graphics.setColor(e and WHITE or 0x7A8290)
+        end
+        graphics.print(8, y, string.format("%02d  %s", s, (e and e.name) or "- empty -"), w - 16, LEFT)
+    end
+end
+
+function onOscPresetView(_valueObject, value)
+    if suppressOscPreset then return end
+    local on = math.floor(value) > 0
+    if on ~= oscPresetView then
+        setOscPresetView(on)
+    end
+end
+
+function onOscPresetTarget(_valueObject, value)
+    if suppressOscPreset then return end
+    local t = math.max(0, math.min(2, math.floor(value)))
+    if t == oscPresetTarget then return end
+    oscPresetTarget = t
+    shownOscPresetBank = nil
+    if oscPresetView then showOscPresetManager() end
+    info.setText(oscPresetHeader())
+end
+
+function onOscPresetSlot(_valueObject, value)
+    if suppressOscPreset then return end
+    selectOscPresetSlot(math.floor(value))
+end
+
+function fmtOscPresetSlot(_valueObject, value)
+    local s = math.floor(value)
+    local e = getOscPresetEntry(s)
+    return string.format("%02d %s", s, (e and e.name) or "<empty>")
+end
+
+function onOscNamePos(_valueObject, value)
+    oscPresetNamePos = math.max(1, math.min(16, math.floor(value)))
+    syncOscNameChar()
+    repaintOscPresetList()
+end
+
+function onOscNameChar(_valueObject, value)
+    if suppressOscPreset then return end
+    local c = math.max(0x20, math.min(0x7E, math.floor(value)))
+    oscPresetName[oscPresetNamePos] = c
+    repaintOscPresetList()
+end
+
+function onOscPresetSave(_valueObject, value)
+    if math.floor(value) <= 0 then return end
+    pendingOscDelete = nil
+    local name = getProgramNameString(oscPresetName, true)
+    if name == "" then name = defaultOscPresetName(oscPresetSlot) end
+    local entry
+    if oscPresetTarget == 2 then
+        entry = {
+            name  = name,
+            types = { selectedOsc1Model, selectedOsc2Model },
+            c1    = captureOscCommon(1),
+            c2    = captureOscCommon(2),
+            v1    = captureOscUnitValues(1, selectedOsc1Model),
+            v2    = captureOscUnitValues(2, selectedOsc2Model),
+        }
+    else
+        local oscIdx = oscPresetTarget + 1
+        local mIdx = (oscIdx == 2) and selectedOsc2Model or selectedOsc1Model
+        entry = {
+            name  = name,
+            model = mIdx,
+            c     = captureOscCommon(oscIdx),
+            v     = captureOscUnitValues(oscIdx, mIdx),
+        }
+    end
+    setOscPresetEntry(oscPresetSlot, entry)
+    local ok = (type(persist) == "function") and pcall(persist, z1PersistLib) or false
+    repaintOscPresetList()
+    info.setText(string.format("Saved %02d: %s%s", oscPresetSlot, name, ok and "" or " (RAM)"))
+end
+
+function onOscPresetLoad(_valueObject, value)
+    if math.floor(value) <= 0 then return end
+    pendingOscDelete = nil
+    local e = getOscPresetEntry(oscPresetSlot)
+    if not e then
+        info.setText(string.format("Slot %02d is empty", oscPresetSlot))
+        return
+    end
+    if oscPresetTarget == 2 then
+        local t1 = (type(e.types) == "table" and type(e.types[1]) == "number") and e.types[1] or e.model
+        if type(t1) == "number" then
+            selectedOsc1Model = t1
+            sendParamChange(0, 174, t1)
+            applyOscCommon(1, e.c1 or e.c)
+            applyOscUnitValues(1, t1, e.v1 or e.v)
+        end
+        local t2 = (type(e.types) == "table") and e.types[2] or nil
+        if type(t2) == "number" and type(e.v2) == "table" then
+            selectedOsc2Model = t2
+            sendParamChange(0, 188, t2)
+            applyOscCommon(2, e.c2)
+            applyOscUnitValues(2, t2, e.v2)
+        end
+    else
+        local oscIdx = oscPresetTarget + 1
+        local mIdx = (oscIdx == 2) and selectedOsc2Model or selectedOsc1Model
+        applyOscCommon(oscIdx, e.c)
+        applyOscUnitValues(oscIdx, mIdx, e.v)
+    end
+    shownOscPresetBank = nil
+    if oscPresetView then showOscPresetManager() end
+    info.setText("Loaded: " .. tostring(e.name))
+end
+
+function onOscPresetRename(_valueObject, value)
+    if math.floor(value) <= 0 then return end
+    pendingOscDelete = nil
+    local e = getOscPresetEntry(oscPresetSlot)
+    if not e then
+        info.setText("Slot empty - use Save")
+        return
+    end
+    local name = getProgramNameString(oscPresetName, true)
+    if name == "" then name = defaultOscPresetName(oscPresetSlot) end
+    e.name = name
+    if type(persist) == "function" then pcall(persist, z1PersistLib) end
+    repaintOscPresetList()
+    info.setText("Renamed: " .. name)
+end
+
+function onOscPresetDelete(_valueObject, value)
+    if math.floor(value) <= 0 then return end
+    if not getOscPresetEntry(oscPresetSlot) then
+        info.setText(string.format("Slot %02d is empty", oscPresetSlot))
+        return
+    end
+    if pendingOscDelete ~= oscPresetSlot then
+        pendingOscDelete = oscPresetSlot
+        info.setText(string.format("Press DELETE again to clear %02d", oscPresetSlot))
+        return
+    end
+    pendingOscDelete = nil
+    setOscPresetEntry(oscPresetSlot, nil)
+    if type(persist) == "function" then pcall(persist, z1PersistLib) end
+    setNameCharsBuffer(oscPresetName, defaultOscPresetName(oscPresetSlot), 0x7E)
+    syncOscNameChar()
+    repaintOscPresetList()
+    info.setText(string.format("Cleared slot %02d", oscPresetSlot))
+end
+
+-- ============================================================================
+-- 5. Lifecycle Hooks
+-- ============================================================================
+
+function preset.onLoad()
+    suppressModelCallback = true
+    for ovId, items in pairs(ENUM_DEFS) do
+        overlays.create(ovId, items)
+    end
+    if type(recall) == "function" and (type(recallJson) ~= "function" or recallJson() ~= nil) then
+        local stored = {}
+        if pcall(recall, stored) and stored.version == 2 then
+            if type(stored.unit) == "table" then z1PersistLib.unit = stored.unit end
+            if type(stored.chain) == "table" then z1PersistLib.chain = stored.chain end
+            if type(stored.tuning) == "table" then z1PersistLib.tuning = stored.tuning end
+            if type(stored.oscUnit) == "table" then z1PersistLib.oscUnit = stored.oscUnit end
+            if type(stored.oscDual) == "table" then z1PersistLib.oscDual = stored.oscDual end
+        end
+    end
+    for _, cid in ipairs({ 2, 8 }) do
+        local c = preset.getControl(cid)
+        if c then c:setPaintCallback(paintOscModel) end
+    end
+    local listCtrl = preset.getControl(37)
+    if listCtrl then
+        listCtrl:setPaintCallback(paintOscPresetList)
+    end
+end
+
+function preset.onReady()
+    suppressModelCallback = false
+    for cid, ovId in pairs(CTRL_OV) do
+        local c = controls.get(cid)
+        if c then c:getValue("value"):setOverlayId(ovId) end
+    end
+    local c35 = controls.get(35)
+    if c35 then c35:getValue("value"):setOverlayId(OV.PRESET_TGT) end
+    local c301 = controls.get(301)
+    if c301 then c301:getValue("value"):setOverlayId(OV.OSC1_TYPE) end
+    local c601 = controls.get(601)
+    if c601 then c601:getValue("value"):setOverlayId(OV.OSC2_TYPE) end
+    setNameCharsBuffer(oscPresetName, defaultOscPresetName(oscPresetSlot), 0x7E)
+    applyOscModel(1, 0)
+    applyOscModel(2, 0)
+    setOscPresetView(false)
+    info.setText("Z1 OSC Common Ready")
+end
+
 function preset.onZ1Param(exId, paramId, z1Val)
     if exId == 0 then
         if paramId == 174 then
-            applyOsc1Model(z1Val)
+            applyOscModel(1, z1Val)
             return
         elseif paramId == 188 then
-            applyOsc2Model(z1Val)
+            applyOscModel(2, z1Val)
             return
         end
         for cid, pid in pairs(CTRL_PARAM) do
             if pid == paramId then
+                commonSaved[cid] = z1Val
                 local c = controls.get(cid)
                 if c then c:getValue("value"):updateValue(z1Val) end
             end
@@ -1094,11 +1515,7 @@ function preset.onZ1Param(exId, paramId, z1Val)
             if def.id == paramId then
                 local disp = (def.kind == "list") and z1ValToIdx(def.ov, z1Val) or z1Val
                 oscSaved[(exId << 11) | paramId] = disp
-                if exId == 1 then
-                    applyOsc1Model(selectedOsc1Model)
-                else
-                    applyOsc2Model(selectedOsc2Model)
-                end
+                applyOscModel(exId, curModel)
                 return
             end
         end
@@ -1110,8 +1527,12 @@ function preset.onZ1Dump(params)
     if not p0 then return end
     for cid, pid in pairs(CTRL_PARAM) do
         if p0[pid] ~= nil then
+            commonSaved[cid] = p0[pid]
             local c = controls.get(cid)
-            if c then c:getValue("value"):updateValue(p0[pid]) end
+            if c then
+                local vo = c:getValue("value")
+                if vo and vo:getValue() ~= p0[pid] then vo:updateValue(p0[pid]) end
+            end
         end
     end
     local osc1Type = p0[174] or selectedOsc1Model

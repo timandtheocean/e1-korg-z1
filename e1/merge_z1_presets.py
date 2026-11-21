@@ -301,7 +301,13 @@ def find_global_func_spans(src):
     return res
 
 
-def find_shared_table_spans(src, names=("MODSRC1", "MODSRC2", "NOTE_NAMES")):
+OVERLAY_ONLY_TABLES = (
+    "MODSRC1", "MODSRC2", "OSC1_TYPES", "OSC2_TYPES",
+    "FX1_TYPES", "FX2_TYPES", "MFX_TYPES", "LFO_WAVES", "EG_TARGETS",
+)
+
+
+def find_shared_table_spans(src, names=("MODSRC1", "MODSRC2", "NOTE_NAMES", "EGS", "ENUM_DEFS") + OVERLAY_ONLY_TABLES):
     """Return dict name -> (start_offset, end_offset, normalized_body) for top-level table definitions."""
     toks = [t for t in lua_tokens(src) if t[0] != "comment"]
     res = OrderedDict()
@@ -310,7 +316,48 @@ def find_shared_table_spans(src, names=("MODSRC1", "MODSRC2", "NOTE_NAMES")):
             start_tok = k - 1 if (k > 0 and toks[k - 1][1] == "local") else k
             close_tok = _match_forward(toks, k + 2)
             norm = " ".join(t[1] for t in toks[k + 2:close_tok + 1])
-            res[text] = (toks[start_tok][2], toks[close_tok][3], norm)
+            if text == "ENUM_DEFS":
+                # Keep 'local ENUM_DEFS = {}' so pairs(ENUM_DEFS) in preset.onLoad() is valid and empty
+                res[text] = (toks[k + 2][2] + 1, toks[close_tok][3] - 1, norm)
+            else:
+                res[text] = (toks[start_tok][2], toks[close_tok][3], norm)
+    return res
+
+
+def find_local_helper_spans(src, names=("getGlobalChannel", "sendParamChange", "z1ValToIdx", "num", "lst", "mint",
+                                         "formatSlotValue", "applyDynamicSlots")):
+    """Return dict name -> (start_offset, end_offset) for top-level 'local function <name>(...) ... end'."""
+    toks = [t for t in lua_tokens(src) if t[0] != "comment"]
+    res = OrderedDict()
+    i = 0
+    depth = 0
+    while i < len(toks):
+        kind, text, s, e = toks[i]
+        if kind == "kw" and text in ("function", "if", "for", "while", "do"):
+            if text == "function" and depth == 0 and i > 0 and toks[i - 1][1] == "local":
+                if i + 2 < len(toks) and toks[i + 1][0] == "name" and toks[i + 2][1] == "(":
+                    fname = toks[i + 1][1]
+                    if fname in names:
+                        fstart = toks[i - 1][2]
+                        d = 1
+                        j = i + 2
+                        while j < len(toks) and d > 0:
+                            k2, t2, _, _ = toks[j]
+                            if k2 == "kw":
+                                if t2 in ("function", "if", "do"):
+                                    d += 1
+                                elif t2 == "end":
+                                    d -= 1
+                            j += 1
+                        fend = toks[j - 1][3]
+                        res[fname] = (fstart, fend)
+                        i = j
+                        continue
+            if text in ("function", "if", "do"):
+                depth += 1
+        elif kind == "kw" and text == "end":
+            depth -= 1
+        i += 1
     return res
 
 
@@ -558,6 +605,7 @@ def merge(modules, name, project_id, warnings):
         prefix = PREFIXES.get(m["name"]) or re.sub(r"[^a-z0-9]", "", m["name"].replace("z1-", ""))[:3]
         m["prefix"] = prefix
         m["func_spans"] = find_global_func_spans(m["lua"])
+        m["local_helper_spans"] = find_local_helper_spans(m["lua"])
         m["table_spans"] = find_shared_table_spans(m["lua"])
         pmap, cmap, omap, dmap, fmap, parmap = {}, {}, {}, {}, OrderedDict(), {}
         reused_funcs = {}
@@ -783,6 +831,35 @@ local function __trackOutgoingSysex(body)
     end
 end
 
+function num(id, name, min, max, fmt, color)
+    return { id = id, name = name, kind = "num", min = min, max = max, fmt = fmt, color = color or WHITE }
+end
+
+function lst(id, name, ov, color)
+    local c = color or (ov == 1 and BLUE or PURPLE)
+    return { id = id, name = name, kind = "list", ov = ov, color = c }
+end
+
+function mint(id, name, min, max, fmt)
+    return num(id, name, min or -99, max or 99, fmt, GREEN)
+end
+
+function formatSlotValue(def, value)
+    local v = math.floor(value)
+    local fmt = def and def.fmt
+    if not fmt then return tostring(v)
+    elseif fmt == "dbhalf" then return string.format("%%+.1f dB", v * 0.5)
+    elseif fmt == "db" then return string.format("%%+d dB", v)
+    elseif fmt == "plus1" then return tostring(v + 1)
+    elseif fmt == "hz10" then return string.format("%%+.1f Hz", v / 10.0)
+    elseif fmt == "slope" then return string.format("%%+.2f", v / 50.0)
+    elseif fmt == "coarse" then return (v == 0) and "0.5" or tostring(v)
+    elseif fmt == "offneg" then return (v < 0) and "OFF" or tostring(v)
+    elseif fmt == "note" and _G.fmtNote then return _G.fmtNote(nil, v)
+    end
+    return tostring(v)
+end
+
 local function __makeEnv(modName, C, O, P)
     local RC = {}
     for l, g in pairs(C) do RC[g] = l end
@@ -885,6 +962,103 @@ local function __makeEnv(modName, C, O, P)
     end
     env.__OV = ov                       -- module overlay id -> merged overlay id
     env.__MODULE = modName
+    env.getGlobalChannel = function()
+        local dev = env.preset.getDevice(1)
+        if dev and dev.getChannel then
+            return (dev:getChannel() - 1) & 0x0F
+        end
+        return 0
+    end
+    env.sendParamChange = function(exId, paramId, signedVal)
+        local dev = env.preset.getDevice(1)
+        local body = env.buildParamChangeBody(exId, paramId, signedVal)
+        if dev then
+            dev:sendSysex(body)
+        else
+            env.midi.sendSysex(PORT_1, body)
+        end
+    end
+    env.z1ValToIdx = function(ovId, z1Val)
+        if not ovId then return z1Val end
+        local o = env.overlays.get(ovId)
+        if o and o.getIndexByValue then
+            local idx = o:getIndexByValue(z1Val)
+            if idx ~= nil then return idx end
+        end
+        if o and o.getValueByIndex then
+            for i = 0, 63 do
+                local v = o:getValueByIndex(i)
+                if v == nil then break end
+                if v == z1Val then return i end
+            end
+        end
+        return z1Val
+    end
+    env.applyDynamicSlots = function(defs, slotFrom, slotTo, slotOffset, faderBase, listBase, slotDefMap, saved, keyShift, suppress)
+        for slot = slotFrom, slotTo do
+            local def = defs[slot - slotOffset]
+            local fid = faderBase + slot
+            local tfid = faderBase + 50 + slot
+            local lid = listBase + slot
+            local fader = env.controls.get(fid)
+            local thin  = env.controls.get(tfid)
+            local list  = env.controls.get(lid)
+            if fader and list then
+                if not def then
+                    if fader:isVisible() then fader:setVisible(false) end
+                    if thin and thin:isVisible() then thin:setVisible(false) end
+                    if list:isVisible() then list:setVisible(false) end
+                elseif def.kind == "list" then
+                    slotDefMap[slot] = def
+                    if fader:isVisible() then fader:setVisible(false) end
+                    if thin and thin:isVisible() then thin:setVisible(false) end
+                    local key = keyShift and ((keyShift << 11) | def.id) or def.id
+                    local initVal = saved[key]
+                    if initVal == nil then initVal = def.defVal or 0 end
+                    local vo = list:getValue("value")
+                    vo:setOverlayId(ov(def.ov))
+                    if vo:getValue() ~= initVal then
+                        suppress[lid] = true
+                        vo:updateValue(initVal)
+                        suppress[lid] = nil
+                    end
+                    if list:getName() ~= def.name then list:setName(def.name) end
+                    local col = def.color or PURPLE
+                    if list:getColor() ~= col then list:setColor(col) end
+                    if not list:isVisible() then list:setVisible(true) end
+                else
+                    slotDefMap[slot] = def
+                    if list:isVisible() then list:setVisible(false) end
+                    local useThin = (thin ~= nil and def.name ~= nil and def.name:find("Int", 1, true) ~= nil)
+                    local activeFader = useThin and thin or fader
+                    local activeFid   = useThin and tfid or fid
+                    local otherFader  = useThin and fader or thin
+                    if otherFader and otherFader:isVisible() then otherFader:setVisible(false) end
+                    local key = keyShift and ((keyShift << 11) | def.id) or def.id
+                    local neutral = def.defVal
+                    if neutral == nil then
+                        neutral = (def.min < 0 and def.max > 0) and 0 or def.min
+                    end
+                    local initVal = saved[key]
+                    if initVal == nil then initVal = neutral end
+                    local vo = activeFader:getValue("value")
+                    if vo:getMin() ~= def.min or vo:getMax() ~= def.max or vo:getDefault() ~= neutral then
+                        vo:getMessage():setRange(0, def.max - def.min)
+                        vo:setRange(def.min, def.max, neutral, false)
+                    end
+                    if vo:getValue() ~= initVal then
+                        suppress[activeFid] = true
+                        vo:updateValue(initVal)
+                        suppress[activeFid] = nil
+                    end
+                    if activeFader:getName() ~= def.name then activeFader:setName(def.name) end
+                    local col = def.color or WHITE
+                    if activeFader:getColor() ~= col then activeFader:setColor(col) end
+                    if not activeFader:isVisible() then activeFader:setVisible(true) end
+                end
+            end
+        end
+    end
     return env
 end
 
@@ -956,9 +1130,11 @@ def build_lua(modules, ov_next, strip_comments, warnings):
 
         drop_spans = []
         promote_globals = []
-        # 1. Deduplicate shared top-level tables (MODSRC1, MODSRC2, NOTE_NAMES)
+        # 1. Strip overlay-only tables (already in preset.z1.json) & deduplicate shared tables (NOTE_NAMES, EGS)
         for tname, (ts, te, tnorm) in m.get("table_spans", {}).items():
-            if tname not in seen_tables:
+            if tname == "ENUM_DEFS" or tname in OVERLAY_ONLY_TABLES:
+                drop_spans.append((ts, te))
+            elif tname not in seen_tables:
                 seen_tables[tname] = tnorm
                 if src[ts:ts + 5] == "local":
                     drop_spans.append((ts, ts + 5))
@@ -979,6 +1155,12 @@ def build_lua(modules, ov_next, strip_comments, warnings):
                     promote_globals.append((fname, fname))
                     if fname == "buildParamChangeBody" and "signedVal == nil" in fnorm:
                         seen_tables["buildParamChangeBody"] = True
+
+        # 3. Drop per-module local helpers provided once by LUA_PRELUDE / __makeEnv
+        for hname, (hs, he) in m.get("local_helper_spans", {}).items():
+            if m["name"] == "z1-base" and hname in ("getGlobalChannel", "sendParamChange"):
+                continue
+            drop_spans.append((hs, he))
 
         body, stats = rewrite_module_lua(src, strip_comments, drop_spans=drop_spans)
         m["lua_stats"] = stats
@@ -1018,7 +1200,10 @@ def main():
     ap.add_argument("--name", default="Korg Z1", help="preset name (max 20 chars)")
     ap.add_argument("--project-id", default=None, help="projectId (default: derived from module list)")
     ap.add_argument("--pretty", action="store_true", help="write indented JSON instead of minified")
-    ap.add_argument("--strip-comments", action="store_true", help="remove Lua comments from main.z1.lua")
+    ap.add_argument("--strip-comments", action="store_true", default=True,
+                    help="remove Lua comments from main.z1.lua (default: True)")
+    ap.add_argument("--keep-comments", dest="strip_comments", action="store_false",
+                    help="keep Lua comments in main.z1.lua")
     ap.add_argument("--check", action="store_true", help="analyse only, write nothing")
     args = ap.parse_args()
 

@@ -30,11 +30,11 @@ test.case("OSC1 Model (Control 2, ID 174) and OSC2 Model (Control 8, ID 188) upd
 
     -- Select OSC1 Model 9 (Brass Model) -> ID 174 (pl=0x2E, pm=0x01)
     test.turn(2, 9)
-    test.eq(getOsc1ModelName(), "Brass Model")
+    test.eq(getOscModelName(1), "Brass Model")
 
     -- Select OSC2 Model 2 (VPM OSC) -> ID 188 (pl=0x3C, pm=0x01)
     test.turn(8, 2)
-    test.eq(getOsc2ModelName(), "VPM OSC")
+    test.eq(getOscModelName(2), "VPM OSC")
 
     local sent = test.sent()
     test.count(sent, 2)
@@ -44,8 +44,8 @@ test.case("OSC1 Model (Control 2, ID 174) and OSC2 Model (Control 8, ID 188) upd
     -- Verify setOscModelsFromDump updates displayed models without echoing SysEx
     test.clear()
     setOscModelsFromDump(12, 7)
-    test.eq(getOsc1ModelName(), "Bowed String")
-    test.eq(getOsc2ModelName(), "Organ Model")
+    test.eq(getOscModelName(1), "Bowed String")
+    test.eq(getOscModelName(2), "Organ Model")
     test.none(test.sent())
 end)
 
@@ -90,4 +90,74 @@ test.case("OSC 2 Pitch, Slope & Pitch Modulation controls send IDs 189..201 (ExI
     assertZ1(sent[2], 0x3E, 0x01, 0x79, 0x7F)
     assertZ1(sent[3], 0x48, 0x01, 0x14, 0x00)
     assertZ1(sent[4], 0x49, 0x01, 0x2D, 0x00)
+end)
+
+test.case("OSC Presets submenu supports per-type OSC1/OSC2 presets and Both OSCs (dual VPM) presets", function()
+    -- 1. Set OSC1 = VPM OSC (2) and OSC2 = VPM OSC (2)
+    test.turn(2, 2)
+    test.turn(8, 2)
+    test.turn(4, 7)   -- OSC1 Semi = +7
+    test.turn(10, -5) -- OSC2 Semi = -5
+
+    -- 2. Open OSC Presets submenu (Control 24)
+    test.turn(24, 1)
+    test.eq(oscPresetView, true)
+    test.eq(controls.get(25):isVisible(), false, "normal CS3 controls hidden while OSC Presets open")
+    test.eq(controls.get(37):isVisible(), true, "Preset List visible in OSC Presets submenu")
+
+    -- 3. Save per-type VPM OSC preset in Slot 3 for OSC 1 (Preset Type = 0)
+    test.turn(35, 0)  -- OSC 1
+    test.turn(36, 3)  -- Slot 3
+    test.turn(40, 1)  -- Name Pos 1
+    test.turn(41, 66) -- 'B'
+    test.turn(39, 1)  -- Save
+    test.eq(z1PersistLib.oscUnit["osc2"]["s3"].name, "BPM OSC 3")
+
+    -- 4. Switch Preset Type to OSC 2 (1) -> shares the VPM OSC ("osc2") preset bank!
+    test.turn(35, 1)  -- OSC 2
+    test.turn(36, 3)  -- Slot 3
+    test.clear()
+    test.turn(38, 1)  -- Load VPM preset into OSC 2 -> OSC2 Semi becomes +7
+    test.eq(commonSaved[10], 7, "loading VPM preset into OSC2 applies saved Semi (+7)")
+
+    -- 5. Save a "Both OSCs" (Preset Type = 2) dual VPM preset in Slot 5, change models, then Load it back
+    test.turn(10, -12) -- OSC2 Semi = -12
+    test.turn(35, 2)   -- Both OSCs
+    test.turn(36, 5)   -- Slot 5
+    test.turn(40, 1)   -- Name Pos 1
+    test.turn(41, 50)  -- '2'
+    test.turn(39, 1)   -- Save Dual OSC preset
+    test.eq(z1PersistLib.oscDual["s5"].name, "2ual OSC 05")
+
+    -- Change OSC1 to Standard OSC (0) and OSC2 to Comb Filter (1), and Semi to 0
+    test.turn(2, 0)
+    test.turn(8, 1)
+    test.turn(4, 0)
+    test.turn(10, 0)
+    test.eq(selectedOsc1Model, 0)
+    test.eq(selectedOsc2Model, 1)
+
+    -- Load Dual OSC preset 5 -> restores both OSC1=VPM (2, Semi=+7) and OSC2=VPM (2, Semi=-12)
+    test.clear()
+    test.turn(38, 1)
+    test.eq(selectedOsc1Model, 2, "Both OSCs preset restored OSC1 to VPM OSC")
+    test.eq(selectedOsc2Model, 2, "Both OSCs preset restored OSC2 to VPM OSC")
+    test.eq(commonSaved[4], 7, "Both OSCs preset restored OSC1 Semi = +7")
+    test.eq(commonSaved[10], -12, "Both OSCs preset restored OSC2 Semi = -12")
+
+    -- Rename & 2-press Delete on Dual OSC Slot 5
+    test.turn(40, 1)
+    test.turn(41, 88) -- 'X'
+    test.turn(42, 1)  -- Rename
+    test.eq(z1PersistLib.oscDual["s5"].name, "Xual OSC 05")
+
+    test.turn(43, 1)
+    test.eq(type(z1PersistLib.oscDual["s5"]), "table", "first Delete press arms confirmation")
+    test.turn(43, 1)
+    test.eq(z1PersistLib.oscDual["s5"], nil, "second Delete press clears slot 5")
+
+    -- Close OSC Presets submenu
+    test.turn(24, 0)
+    test.eq(oscPresetView, false)
+    test.eq(controls.get(25):isVisible(), true, "normal CS3 controls visible again")
 end)

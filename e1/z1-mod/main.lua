@@ -245,21 +245,25 @@ function fmtPan(_valueObject, value)
     else return string.format("R%d", v) end
 end
 
-function fmtDynSlot(valueObject, value)
-    local slot = valueObject:getControl():getId() % 100
-    local def = activeDynDef[slot]
+local function formatSlotValue(def, value)
     local v = math.floor(value)
-    if not def or not def.fmt then
-        return tostring(v)
-    end
-    if def.fmt == "hz10" then
-        return string.format("%+.1f Hz", v / 10.0)
-    elseif def.fmt == "slope" then
-        return string.format("%+.2f", v / 50.0)
-    elseif def.fmt == "note" then
-        return fmtNote(valueObject, value)
+    local fmt = def and def.fmt
+    if not fmt then return tostring(v)
+    elseif fmt == "dbhalf" then return string.format("%+.1f dB", v * 0.5)
+    elseif fmt == "db" then return string.format("%+d dB", v)
+    elseif fmt == "plus1" then return tostring(v + 1)
+    elseif fmt == "hz10" then return string.format("%+.1f Hz", v / 10.0)
+    elseif fmt == "slope" then return string.format("%+.2f", v / 50.0)
+    elseif fmt == "coarse" then return (v == 0) and "0.5" or tostring(v)
+    elseif fmt == "offneg" then return (v < 0) and "OFF" or tostring(v)
+    elseif fmt == "note" and fmtNote then return fmtNote(nil, v)
     end
     return tostring(v)
+end
+
+function fmtDynSlot(valueObject, value)
+    local slot = valueObject:getControl():getId() % 50
+    return formatSlotValue(activeDynDef[slot], value)
 end
 
 -- ============================================================================
@@ -297,6 +301,72 @@ end
 -- 4. Callbacks & Dynamic Section Relayout
 -- ============================================================================
 
+local function applyDynamicSlots(defs, slotFrom, slotTo, slotOffset, faderBase, listBase, slotDefMap, saved, keyShift, suppress)
+    for slot = slotFrom, slotTo do
+        local def = defs[slot - slotOffset]
+        local fid = faderBase + slot
+        local tfid = faderBase + 50 + slot
+        local lid = listBase + slot
+        local fader = controls.get(fid)
+        local thin  = controls.get(tfid)
+        local list  = controls.get(lid)
+        if fader and list then
+            if not def then
+                if fader:isVisible() then fader:setVisible(false) end
+                if thin and thin:isVisible() then thin:setVisible(false) end
+                if list:isVisible() then list:setVisible(false) end
+            elseif def.kind == "list" then
+                slotDefMap[slot] = def
+                if fader:isVisible() then fader:setVisible(false) end
+                if thin and thin:isVisible() then thin:setVisible(false) end
+                local key = keyShift and ((keyShift << 11) | def.id) or def.id
+                local initVal = saved[key]
+                if initVal == nil then initVal = def.defVal or 0 end
+                local vo = list:getValue("value")
+                vo:setOverlayId(def.ov)
+                if vo:getValue() ~= initVal then
+                    suppress[lid] = true
+                    vo:updateValue(initVal)
+                    suppress[lid] = nil
+                end
+                if list:getName() ~= def.name then list:setName(def.name) end
+                local col = def.color or PURPLE
+                if list:getColor() ~= col then list:setColor(col) end
+                if not list:isVisible() then list:setVisible(true) end
+            else
+                slotDefMap[slot] = def
+                if list:isVisible() then list:setVisible(false) end
+                local useThin = (thin ~= nil and def.name ~= nil and def.name:find("Int", 1, true) ~= nil)
+                local activeFader = useThin and thin or fader
+                local activeFid   = useThin and tfid or fid
+                local otherFader  = useThin and fader or thin
+                if otherFader and otherFader:isVisible() then otherFader:setVisible(false) end
+                local key = keyShift and ((keyShift << 11) | def.id) or def.id
+                local neutral = def.defVal
+                if neutral == nil then
+                    neutral = (def.min < 0 and def.max > 0) and 0 or def.min
+                end
+                local initVal = saved[key]
+                if initVal == nil then initVal = neutral end
+                local vo = activeFader:getValue("value")
+                if vo:getMin() ~= def.min or vo:getMax() ~= def.max or vo:getDefault() ~= neutral then
+                    vo:getMessage():setRange(0, def.max - def.min)
+                    vo:setRange(def.min, def.max, neutral, false)
+                end
+                if vo:getValue() ~= initVal then
+                    suppress[activeFid] = true
+                    vo:updateValue(initVal)
+                    suppress[activeFid] = nil
+                end
+                if activeFader:getName() ~= def.name then activeFader:setName(def.name) end
+                local col = def.color or WHITE
+                if activeFader:getColor() ~= col then activeFader:setColor(col) end
+                if not activeFader:isVisible() then activeFader:setVisible(true) end
+            end
+        end
+    end
+end
+
 function applyModSection(secIdx)
     local defs = DYN_SECTIONS[secIdx]
     if not defs then
@@ -313,52 +383,7 @@ function applyModSection(secIdx)
         grp:setLabel(title)
     end
 
-    for s = 1, 16 do
-        local def = defs[s]
-        local fader = controls.get(100 + s)
-        local list  = controls.get(200 + s)
-
-        if not def then
-            fader:setVisible(false)
-            list:setVisible(false)
-        elseif def.kind == "list" then
-            activeDynDef[s] = def
-            fader:setVisible(false)
-
-            local initVal = modSaved[def.id]
-            if initVal == nil then initVal = def.defVal or 0 end
-
-            local vo = list:getValue("value")
-            vo:setOverlayId(def.ov)
-            suppressDyn[200 + s] = true
-            vo:updateValue(initVal)
-            suppressDyn[200 + s] = nil
-            list:setName(def.name)
-            list:setColor(def.color or PURPLE)
-            list:setVisible(true)
-        else
-            activeDynDef[s] = def
-            list:setVisible(false)
-
-            local neutral = def.defVal
-            if neutral == nil then
-                neutral = (def.min < 0 and def.max > 0) and 0 or def.min
-            end
-            local initVal = modSaved[def.id]
-            if initVal == nil then initVal = neutral end
-
-            local vo = fader:getValue("value")
-            local span = def.max - def.min
-            vo:getMessage():setRange(0, span)
-            vo:setRange(def.min, def.max, neutral, false)
-            suppressDyn[100 + s] = true
-            vo:updateValue(initVal)
-            suppressDyn[100 + s] = nil
-            fader:setName(def.name)
-            fader:setColor(def.color or WHITE)
-            fader:setVisible(true)
-        end
-    end
+    applyDynamicSlots(defs, 1, 16, 0, 100, 200, activeDynDef, modSaved, nil, suppressDyn)
     window.resume()
 end
 
@@ -395,7 +420,7 @@ function onDynMod(valueObject, value)
     if not ctrl:isVisible() then
         return
     end
-    local s = ctrlId % 100
+    local s = ctrlId % 50
     local def = activeDynDef[s]
     if not def then
         return

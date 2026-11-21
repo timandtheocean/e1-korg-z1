@@ -66,23 +66,7 @@ test.case("Assignable Controllers (SW1, FootSW, Pedal, Pad Hold)", function()
     assertZ1(sent[4], 117, 2, 1, 0)
 end)
 
-test.case("Program Name Editing & Dump Sync", function()
-    test.turn(33, 1)
-    test.turn(34, 65)
-    test.clear()
-
-    test.turn(33, 2)  -- Select Pos 2 -> no MIDI sent
-    test.count(test.sent(), 0)
-
-    test.turn(34, 90) -- Set Char 2 (ID 2) to 'Z' (90)
-    test.turn(33, 3)  -- Select Pos 3
-    test.turn(34, 49) -- Set Char 3 (ID 3) to '1' (49)
-
-    local sent = test.sent()
-    test.count(sent, 2)
-    assertZ1(sent[1], 2, 0, 90, 0)
-    assertZ1(sent[2], 3, 0, 49, 0)
-
+test.case("Program Name Display & Dump Sync", function()
     test.clear()
     setProgramNameFromDump({ 0x4D, 0x4F, 0x53, 0x53, 0x20, 0x4C, 0x65, 0x61, 0x64 })
     test.count(test.sent(), 0)

@@ -117,11 +117,36 @@ local ENUM_DEFS = {
 -- All 5 Envelope Generators that can be assigned to Filter Cutoff Mod EG (Z1 values 1..5):
 -- 1=EG1 (31..39), 2=EG2 (50..58), 3=EG3 (69..77), 4=EG4 (88..96), 5=Amp EG (334..340)
 EGS = {
-    [1] = { name = "EG1",    isAmp = false, curve = { start = 31,  r1 = 32,  l1 = 33,  r2 = 34,  l2 = 35,  r3 = 36,  l3 = 37,  r4 = 38,  l4 = 39  } },
-    [2] = { name = "EG2",    isAmp = false, curve = { start = 50,  r1 = 51,  l1 = 52,  r2 = 53,  l2 = 54,  r3 = 55,  l3 = 56,  r4 = 57,  l4 = 58  } },
-    [3] = { name = "EG3",    isAmp = false, curve = { start = 69,  r1 = 70,  l1 = 71,  r2 = 72,  l2 = 73,  r3 = 74,  l3 = 75,  r4 = 76,  l4 = 77  } },
-    [4] = { name = "EG4",    isAmp = false, curve = { start = 88,  r1 = 89,  l1 = 90,  r2 = 91,  l2 = 92,  r3 = 93,  l3 = 94,  r4 = 95,  l4 = 96  } },
-    [5] = { name = "Amp EG", isAmp = true,  curve = { start = nil, r1 = 334, l1 = 335, r2 = 336, l2 = 337, r3 = 338, l3 = 339, r4 = 340, l4 = nil } },
+    [1] = {
+        name = "EG1",
+        isAmp = false,
+        curve = { start = 31, r1 = 32, l1 = 33, r2 = 34, l2 = 35, r3 = 36, l3 = 37, r4 = 38, l4 = 39 },
+        mod   = { 40, 41, 42, 43, 44, 45, 46, 47, 48, 49 },
+    },
+    [2] = {
+        name = "EG2",
+        isAmp = false,
+        curve = { start = 50, r1 = 51, l1 = 52, r2 = 53, l2 = 54, r3 = 55, l3 = 56, r4 = 57, l4 = 58 },
+        mod   = { 59, 60, 61, 62, 63, 64, 65, 66, 67, 68 },
+    },
+    [3] = {
+        name = "EG3",
+        isAmp = false,
+        curve = { start = 69, r1 = 70, l1 = 71, r2 = 72, l2 = 73, r3 = 74, l3 = 75, r4 = 76, l4 = 77 },
+        mod   = { 78, 79, 80, 81, 82, 83, 84, 85, 86, 87 },
+    },
+    [4] = {
+        name = "EG4",
+        isAmp = false,
+        curve = { start = 88, r1 = 89, l1 = 90, r2 = 91, l2 = 92, r3 = 93, l3 = 94, r4 = 95, l4 = 96 },
+        mod   = { 97, 98, 99, 100, 101, 102, 103, 104, 105, 106 },
+    },
+    [5] = {
+        name = "Amp EG",
+        isAmp = true,
+        curve = { start = nil, r1 = 334, l1 = 335, r2 = 336, l2 = 337, r3 = 338, l3 = 339, r4 = 340, l4 = nil },
+        mod   = { 342, 343, 344, 345, 346, 347, 348, 349, 350, 351 },
+    },
 }
 
 local HANDLES = { "l1", "r1", "l2", "r2", "l3", "r3", "l4", "r4" }
@@ -519,15 +544,12 @@ function onStaticFilter(valueObject, value)
     local z1Val = v
     if spec.kind == "list" then
         local idx = v
-        local defs = ENUM_DEFS[spec.ov]
-        if valueObject.getMin and valueObject:getMin() == 1 and defs and defs[1] and defs[1].value == 1 then
+        local ov = overlays.get(spec.ov)
+        if valueObject.getMin and valueObject:getMin() == 1 and ov and ov:getValueByIndex(0) == 1 then
             idx = v - 1
             z1Val = v
         else
-            local ov = overlays.get(spec.ov)
-            z1Val = (defs and defs[idx + 1] and defs[idx + 1].value)
-                 or (ov and ov:getValueByIndex(idx))
-                 or v
+            z1Val = (ov and ov:getValueByIndex(idx)) or v
         end
         if spec.flt ~= nil then
             if idx < 0 then idx = 0 elseif idx > 4 then idx = 4 end

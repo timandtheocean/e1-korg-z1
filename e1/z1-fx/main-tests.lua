@@ -53,6 +53,7 @@ end)
 
 -- Case 3: FX2 Chorus (Alg 6, ExID = 4)
 test.case("FX2 Chorus ExID=4", function()
+    test.turn(1, 0)  -- FX1 back to Overdrive (Rotary Spkr from case 2 blocks FX2)
     test.turn(11, 1) -- Edit FX2
     test.turn(2, 0)
     test.clear()
@@ -68,28 +69,75 @@ test.case("FX2 Chorus ExID=4", function()
     assertZ1(sent[2], 114, 70, 55, 0)
 end)
 
--- Case 4: Master FX Reverb-Hall (Alg 1, ExID = 5) & Unit Preset Save/Recall
-test.case("Master FX ExID=5 & Preset Save/Recall", function()
+-- Case 4: Master FX Reverb-Hall (Alg 1, ExID = 5) & named per-type preset Save/Load
+test.case("Master FX ExID=5 & Named Preset Save/Load", function()
     test.turn(11, 2) -- Edit Master FX
     test.turn(3, 0)  -- MFX = Stereo Delay
-    test.turn(12, 0)
     test.clear()
 
     -- MFX Select = Reverb-Hall (1); ID 361 -> pl=105, pm=2
     test.turn(3, 1)
     -- Slot 1 (Reverb Time, ID 1018, ExID=5 -> id14=11258 -> pl=122, pm=87) = 42
     test.turn(101, 42)
-    -- Save Unit Preset 1 (act = 3)
-    test.turn(12, 3)
 
-    -- Change Reverb Time to 10, then Recall Unit Preset 1 (act = 1)
-    test.turn(101, 10)
-    test.clear()
+    -- Open the preset library: target follows EDIT FX (Master FX), FX slots are hidden
     test.turn(12, 1)
+    test.eq(controls.get(301):isVisible(), true)
+    test.eq(controls.get(101):isVisible(), false)
+    test.eq(presetTarget, 2)
+
+    -- Slot 3, rename char 1 to 'H', save
+    test.turn(302, 3)
+    test.turn(306, 1)
+    test.turn(307, 72)
+    test.turn(305, 1)
+    test.eq(fxLib.unit["mfx1"]["s3"].name, "Heverb-Hall 3")
+
+    -- Change Reverb Time, then load slot 3 again
+    test.turn(12, 0)
+    test.turn(101, 10)
+    test.turn(12, 1)
+    test.clear()
+    test.turn(304, 1)
 
     local sent = test.sent()
-    -- Recall sends MFX Select (361 = 1) + all 10 Reverb-Hall params (first is 1018 = 42)
-    test.count(sent, 11)
-    assertZ1(sent[1], 105, 2, 1, 0)
-    assertZ1(sent[2], 122, 87, 42, 0)
+    -- Unit preset load sends all 10 Reverb-Hall params (first is 1018 = 42)
+    test.count(sent, 10)
+    assertZ1(sent[1], 122, 87, 42, 0)
+end)
+
+-- Case 5: FX2 Select hidden while FX1 is an FX1-only algorithm
+test.case("FX2 Select hidden for FX1-only types", function()
+    test.turn(12, 0)
+    test.turn(11, 1) -- Edit FX2
+    for _, t in ipairs({ 11, 12, 13, 14 }) do
+        test.turn(1, t)
+        test.eq(controls.get(2):isVisible(), false, "FX1 type " .. t)
+        test.eq(controls.get(101):isVisible(), false, "FX2 params hidden for " .. t)
+    end
+    test.turn(1, 6)
+    test.eq(controls.get(2):isVisible(), true)
+    test.eq(controls.get(101):isVisible(), true)
+    test.turn(1, 0)
+end)
+
+-- Case 6: 25-slot FX chain preset (selects + params + send/EQ)
+test.case("FX Chain preset slot 25", function()
+    test.turn(11, 0) -- Edit FX1
+    test.turn(1, 6)  -- FX1 = Chorus
+    test.turn(101, 55)
+    test.turn(12, 1)
+    test.turn(301, 3) -- FX Chain
+    test.turn(302, 25)
+    test.turn(305, 1)
+    test.eq(fxLib.chain["s25"].name, "Chain 25")
+
+    test.turn(1, 0)  -- FX1 = Overdrive
+    test.clear()
+    test.turn(304, 1)
+    local sent = test.sent()
+    -- FX1 Select = 6 first, then Chorus Delay Time (882, ExID 3 -> id14=7026 -> pl=114, pm=54) = 55
+    assertZ1(sent[1], 103, 2, 6, 0)
+    assertZ1(sent[2], 114, 54, 55, 0)
+    test.eq(controls.get(1):getValue("value"):getValue(), 6)
 end)

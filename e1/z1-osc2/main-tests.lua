@@ -20,7 +20,7 @@ test.case("OSC2 Type selector sends param 188 (ExID 0) and relayouts Comb Filter
 
     test.eq(controls.get(202):isVisible(), true)
     test.eq(controls.get(202):getName(), "Input Sel")
-    test.eq(controls.get(115):isVisible(), true)
+    test.eq(controls.get(165):isVisible(), true)
     test.eq(controls.get(116):isVisible(), false)
     test.eq(controls.get(216):isVisible(), false)
 end)
@@ -30,13 +30,13 @@ test.case("Standard OSC on OSC2 sends ExID 2 (4096 + ID): Wave (464), LFO (471),
     test.turn(202, 0)
     test.turn(209, 0)
     test.turn(211, 0)
-    test.turn(112, 0)
+    test.turn(162, 0)
     test.clear()
 
     test.turn(202, 1)
     test.turn(209, 2)
     test.turn(211, 20)
-    test.turn(112, -50)
+    test.turn(162, -50)
 
     local sent = test.sent()
     test.count(sent, 4)
