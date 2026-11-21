@@ -1,5 +1,7 @@
 # Page 12: Effects, 2-Band EQ & FX Preset Library (`FX & EQ`)
 
+[← Back to the manual index](https://github.com/timandtheocean/e1-korg-z1/tree/main/usermanual/README.md) · [All manual pages](https://github.com/timandtheocean/e1-korg-z1/tree/main/usermanual/pages)
+
 At the end of the Korg Z1 voice signal chain, the stereo output passes through a dedicated **2-Band Master EQ**, a versatile **Modulation / Delay / Multi-Effect Processor (`FX 1`)**, and a **Master Reverb / Delay / Spatial Processor (`FX 2`)**.
 
 The **FX & EQ** page dynamically reconfigures its controls to match whichever effect algorithms are active on **FX 1** and **FX 2**, and includes a built-in **FX Preset Library** that stores both individual algorithm presets and complete **FX Chain** setups.

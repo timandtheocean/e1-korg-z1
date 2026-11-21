@@ -1,5 +1,7 @@
 # Page 3: OSC Common & Oscillator Preset Library (`OSC common`)
 
+[← Back to the manual index](https://github.com/timandtheocean/e1-korg-z1/tree/main/usermanual/README.md) · [All manual pages](https://github.com/timandtheocean/e1-korg-z1/tree/main/usermanual/pages)
+
 The **OSC Common** page puts the pitch, fine-tuning, pitch key-tracking slope, and pitch modulation routing for **Oscillator 1** and **Oscillator 2** side by side on a single screen. It also hosts quick navigation links to the individual oscillator pages and the on-board **OSC Preset Library**.
 
 > [!TIP]
@@ -44,8 +46,8 @@ Each oscillator has an identical 2-column control strip:
 
 ## 2. Navigation & Model Displays (Columns 5–6)
 
-- **Jump OSC 1**: Switches immediately to [Page 4: Oscillator 1](file:///home/timbos/src/Z1/usermanual/pages/02-osc1.md).
-- **Jump OSC 2**: Switches immediately to [Page 5: Oscillator 2](file:///home/timbos/src/Z1/usermanual/pages/03-osc2.md).
+- **Jump OSC 1**: Switches immediately to [Page 4: Oscillator 1](https://github.com/timandtheocean/e1-korg-z1/tree/main/usermanual/pages/02-osc1.md).
+- **Jump OSC 2**: Switches immediately to [Page 5: Oscillator 2](https://github.com/timandtheocean/e1-korg-z1/tree/main/usermanual/pages/03-osc2.md).
 - **OSC1 Model / OSC2 Model**: Read-only status boxes showing which synthesis algorithms are currently active on OSC 1 and OSC 2 (for example, `VPM` and `Reed Model`).
 - **OSC Presets**: Toggles the **OSC Preset Library** drawer open or closed across Rows 5–6.
 
@@ -71,7 +73,7 @@ The **Target** knob in Column 3 chooses between three library modes:
 
 1. **`OSC 1` (8 Slots per OSC 1 Model)**:
    - Displays **8 preset slots specifically for the currently active OSC 1 synthesis model** (e.g., 8 presets for `VPM`, 8 presets for `Brass Model`, 8 presets for `Plucked String`).
-   - Saving stores all parameters of the [OSC 1](file:///home/timbos/src/Z1/usermanual/pages/02-osc1.md) page. Loading applies those parameters to OSC 1 and transmits them to the Z1.
+   - Saving stores all parameters of the [OSC 1](https://github.com/timandtheocean/e1-korg-z1/tree/main/usermanual/pages/02-osc1.md) page. Loading applies those parameters to OSC 1 and transmits them to the Z1.
 2. **`OSC 2` (8 Slots per OSC 2 Model — Shared with OSC 1)**:
    - Displays **8 preset slots for the currently active OSC 2 synthesis model**.
    - **Shared Model Pool**: For the 9 synthesis models available on both oscillators (`Standard`, `Comb Filter`, `VPM`, `Resonance`, `Ring Mod`, `Cross Mod`, `Sync`, `Organ Model`, and `Reed Model`), OSC 1 and OSC 2 share the exact same 8-slot model pool. A great `VPM` or `Organ Model` preset saved from OSC 1 can be loaded straight into OSC 2!

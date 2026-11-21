@@ -1,5 +1,7 @@
 # Page 8: Dual Multi-Mode Filters (`Filters`)
 
+[← Back to the manual index](https://github.com/timandtheocean/e1-korg-z1/tree/main/usermanual/README.md) · [All manual pages](https://github.com/timandtheocean/e1-korg-z1/tree/main/usermanual/pages)
+
 The Korg Z1 contains two independent multi-mode resonant filters (**Filter 1** and **Filter 2**). The **Filters** page displays both filters side by side with live interactive frequency-response graphs, an intelligent **Assigned Cutoff Envelope** editor at the bottom of the screen, and an auto-appearing drawer for Dual Band-Pass (`2BPF`) controls.
 
 ---
@@ -56,7 +58,7 @@ Instead of making you flip back and forth between the Filters page and the Envel
 
 1. **FILTER SELECT (`Filter 1` / `Filter 2`)**: Selects which filter the bottom section focuses on.
 2. **Automatic Envelope Following**: The embedded envelope graph automatically links to whichever envelope is currently chosen in **EG Src** (`EG 1`, `EG 2`, `EG 3`, `EG 4`, or `Amp EG`) for the selected filter!
-3. **Touch-Drag or Knob Editing**: Drag the envelope stages directly on the touchscreen—or use the **Attack**, **Decay**, **Slope**, **Release**, and **EG StartLvl** controls in Row 6—to reshape the active filter envelope. Any edits you make here stay 100% synchronized with [Page 10: Envelopes](file:///home/timbos/src/Z1/usermanual/pages/07-envelopes.md).
+3. **Touch-Drag or Knob Editing**: Drag the envelope stages directly on the touchscreen—or use the **Attack**, **Decay**, **Slope**, **Release**, and **EG StartLvl** controls in Row 6—to reshape the active filter envelope. Any edits you make here stay 100% synchronized with [Page 10: Envelopes](https://github.com/timandtheocean/e1-korg-z1/tree/main/usermanual/pages/07-envelopes.md).
 
 ---
 

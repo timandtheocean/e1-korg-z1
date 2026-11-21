@@ -1,5 +1,7 @@
 # Page 1: Utility, Patch Sync & Microtonal Tuning (`Utility`)
 
+[← Back to the manual index](https://github.com/timandtheocean/e1-korg-z1/tree/main/usermanual/README.md) · [All manual pages](https://github.com/timandtheocean/e1-korg-z1/tree/main/usermanual/pages)
+
 The **Utility** page is your command center for connecting to the Korg Z1, synchronizing patches, protecting your edits from accidental loss, naming programs, and designing custom microtonal scales on a 5-octave interactive keyboard.
 
 ---
@@ -45,7 +47,7 @@ When you load the preset, the Electra One automatically queries the Korg Z1 and 
 
 ## 2. Patch Protection Backup & One-Touch Recovery
 
-On the Korg Z1 hardware, switching to another program immediately discards any unsaved edits in the edit buffer. The Electra One protects your work with an automatic **30-second safety window** plus manual snapshot backups:
+On the Korg Z1 hardware, switching to another program immediately discards any unsaved edits in the edit buffer. The Electra One protects your work with an automatic **30-second safety window** plus a manual backup. Backups and the undo history are kept in the Electra One's memory only (see the note below):
 
 - **Automatic 30-Second Protection**: Every time you edit a knob or slider, the Electra One keeps a backup of your work in memory. If you accidentally switch programs on the Z1 (or tap **Patch Req**), your previous edits remain protected for **30 seconds** without being overwritten by the newly loaded patch.
 - **Backup Now**: Manually freezes your current patch into the backup slot at any time—ideal right before experimenting with major sound changes. Backups are kept in the Electra One's memory only, so they are lost when you power it off.
@@ -58,7 +60,7 @@ On the Korg Z1 hardware, switching to another program immediately discards any u
 - **Undo**: Steps backward through your last **16 parameter edits** and immediately updates the Korg Z1.
 - **Redo**: Steps forward through any changes you just undid.
 - **Smart Knob Grouping**: Smoothly sweeping a knob or fader is grouped into a **single Undo step**, so pressing **Undo** returns the parameter to where it started before the sweep rather than stepping through every single intermediate value.
-- **Memory Only**: The undo history is kept in the Electra One's memory and is cleared when you power it off. It is not written to snapshot slots, because saving a snapshot freezes the Electra One for several seconds on firmware 5.1.0.
+- **Memory Only (Snapshots Disabled)**: The undo history and the backups are kept in the Electra One's memory and are cleared when you power it off. Writing to Electra snapshot slots is **disabled** in this version, because saving a snapshot freezes the Electra One for several seconds on firmware 5.1.0. Because of this, no `saveSnapshot` or `updateSnapshot` entries appear in the debug log and your snapshot slots are never touched.
 - **Clean History**: Moving the patch-name cursor or typing letters into the patch name does not clutter your sound-design undo history.
 
 ---
@@ -71,7 +73,7 @@ You can rename the active 16-character Z1 program directly from the Utility page
 2. **Name Char**: Scrolls through the available characters (`A–Z`, `a–z`, `0–9`, spaces, and symbols). While you turn **Name Char**, the character is highlighted on the display and sent directly to the Z1.
 3. **Program Name Display**: Shows the full 16-character program name across two large lines (`chars 1–8` on top, `chars 9–16` below) with a bright cursor underline beneath the currently selected character position.
 
-*(A read-only **Program Name** banner is also visible on the [Common & Arp](file:///home/timbos/src/Z1/usermanual/pages/11-common-arp.md) page so you can always see the active patch name when configuring performance settings.)*
+*(A read-only **Program Name** banner is also visible on the [Common & Arp](https://github.com/timandtheocean/e1-korg-z1/tree/main/usermanual/pages/11-common-arp.md) page so you can always see the active patch name when configuring performance settings.)*
 
 ---
 
@@ -81,7 +83,7 @@ The Korg Z1 supports two global user-programmable microtonal scales stored insid
 - **User Scale 1 (Octave)**: A 12-note scale (`C` through `B`) whose cent offsets repeat identically across every octave on the keyboard.
 - **User Scale 2 (128 Keys)**: A full-keyboard scale where every single MIDI note (`C-1` to `G9`, 128 notes total) can be tuned independently from `-99` to `+99` cents.
 
-*(Note: To hear a user scale in your patch, set **Scale Type** on the [Common & Arp](file:///home/timbos/src/Z1/usermanual/pages/11-common-arp.md) page to `UserOctave` or `UserAllNote`.)*
+*(Note: To hear a user scale in your patch, set **Scale Type** on the [Common & Arp](https://github.com/timandtheocean/e1-korg-z1/tree/main/usermanual/pages/11-common-arp.md) page to `UserOctave` or `UserAllNote`.)*
 
 ### Using the 5-Octave Interactive Keyboard (`C2..C7`)
 - **Touch Any Key to Select It**: Tap directly on any white or black key across the 5-octave piano display in Row 3 to select that note for tuning. The selected key is highlighted in white.
@@ -120,5 +122,5 @@ Tap the **Tune Preset** button on the right side of Row 5 to open or close the o
 ---
 
 ## Next Pages
-- Continue to [Page 2: Common & Arp](file:///home/timbos/src/Z1/usermanual/pages/11-common-arp.md) to select your patch's **Scale Type** (`UserOctave` or `UserAllNote`), Unison, and Voice Assign mode.
-- Jump to [Page 3: OSC Common](file:///home/timbos/src/Z1/usermanual/pages/03b-osc-common.md) to set oscillator tuning and manage oscillator presets.
+- Continue to [Page 2: Common & Arp](https://github.com/timandtheocean/e1-korg-z1/tree/main/usermanual/pages/11-common-arp.md) to select your patch's **Scale Type** (`UserOctave` or `UserAllNote`), Unison, and Voice Assign mode.
+- Jump to [Page 3: OSC Common](https://github.com/timandtheocean/e1-korg-z1/tree/main/usermanual/pages/03b-osc-common.md) to set oscillator tuning and manage oscillator presets.

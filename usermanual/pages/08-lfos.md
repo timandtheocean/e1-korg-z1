@@ -1,5 +1,7 @@
 # Page 11: Quad LFOs (`LFO1-4`)
 
+[← Back to the manual index](https://github.com/timandtheocean/e1-korg-z1/tree/main/usermanual/README.md) · [All manual pages](https://github.com/timandtheocean/e1-korg-z1/tree/main/usermanual/pages)
+
 The Korg Z1 features four independent Low Frequency Oscillators (**LFO 1**, **LFO 2**, **LFO 3**, and **LFO 4**) with 18 waveform shapes, variable starting phase, vertical DC offset, fade-in delay/ramp, key sync, and MIDI clock synchronization.
 
 The **LFO1-4** page arranges all four LFOs side by side in vertical columns topped by **live custom waveform visualizers**, with a shared **MIDI Sync & Frequency Modulation** inspector at the bottom of the screen.

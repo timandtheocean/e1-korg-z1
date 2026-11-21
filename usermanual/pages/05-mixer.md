@@ -1,5 +1,7 @@
 # Page 7: 5-Channel Dual-Bus Mixer (`Mixer`)
 
+[← Back to the manual index](https://github.com/timandtheocean/e1-korg-z1/tree/main/usermanual/README.md) · [All manual pages](https://github.com/timandtheocean/e1-korg-z1/tree/main/usermanual/pages)
+
 The Korg Z1 features a dual-bus voice mixer that lets you route five distinct audio sources independently into **Filter 1 Bus (`F1`)** and **Filter 2 Bus (`F2`)**:
 1. **OSC 1**
 2. **OSC 2**

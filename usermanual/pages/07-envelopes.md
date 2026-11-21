@@ -1,5 +1,7 @@
 # Page 10: Five Interactive Envelopes (`Envelopes`)
 
+[← Back to the manual index](https://github.com/timandtheocean/e1-korg-z1/tree/main/usermanual/README.md) · [All manual pages](https://github.com/timandtheocean/e1-korg-z1/tree/main/usermanual/pages)
+
 The Korg Z1 provides **five multi-stage envelope generators** per voice:
 - **EG 1 (Pitch / General EG)**
 - **EG 2 (Filter 1 / General EG)**

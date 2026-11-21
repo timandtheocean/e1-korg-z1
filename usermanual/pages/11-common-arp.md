@@ -1,5 +1,7 @@
 # Page 2: Voice Common, Key Scale & Arpeggiator (`Common & Arp`)
 
+[← Back to the manual index](https://github.com/timandtheocean/e1-korg-z1/tree/main/usermanual/README.md) · [All manual pages](https://github.com/timandtheocean/e1-korg-z1/tree/main/usermanual/pages)
+
 The **Common & Arp** page brings together all patch-wide voice assignment, unison stacking, musical scale selection, tuning instabilities, arpeggiator feel, and patch category settings on a single clean overview screen.
 
 ---
@@ -42,7 +44,7 @@ Selects which temperament or custom microtonal scale the current patch uses, alo
 
 | Control | Options / Range | Musical Function |
 | :--- | :--- | :--- |
-| **Scale Type** | `Equal Temp 1`, `Equal Temp 2`, `Pure Major`, `Pure Minor`, `Arabic`, `Pythagorean`, `Werckmeister`, `Kirnberger`, `Slendro`, `Pelog`, `UserOctave`, `UserAllNote` | Chooses the patch's musical tuning temperament. Select **`UserOctave`** to play **User Scale 1 (Octave)** or **`UserAllNote`** to play **User Scale 2 (128 Keys)** edited on the [Utility](file:///home/timbos/src/Z1/usermanual/pages/01-base-utility.md) page. |
+| **Scale Type** | `Equal Temp 1`, `Equal Temp 2`, `Pure Major`, `Pure Minor`, `Arabic`, `Pythagorean`, `Werckmeister`, `Kirnberger`, `Slendro`, `Pelog`, `UserOctave`, `UserAllNote` | Chooses the patch's musical tuning temperament. Select **`UserOctave`** to play **User Scale 1 (Octave)** or **`UserAllNote`** to play **User Scale 2 (128 Keys)** edited on the [Utility](https://github.com/timandtheocean/e1-korg-z1/tree/main/usermanual/pages/01-base-utility.md) page. |
 | **Scale Key** | `C` through `B` | Sets the root tonic key for historic and world temperaments (such as `Pure Major`, `Pure Minor`, or `Arabic`). |
 | **Random Pitch** | `0` – `7` | Introduces subtle random per-note pitch variation on every key strike, recreating the organic tuning drift of vintage analog poly-synths. |
 | **Transpose** | `-24` to `+24` semitones | Transposes the entire patch up or down by up to 2 octaves in semitone steps. |
@@ -51,7 +53,7 @@ Selects which temperament or custom microtonal scale the current patch uses, alo
 
 ## 3. Live Program Name Banner (Row 3)
 
-- **Program Name**: Displays the current 16-character patch name across two large lines so you always know which patch is loaded while adjusting performance and scale settings. *(To rename the patch, use the interactive character editor on [Page 1: Utility](file:///home/timbos/src/Z1/usermanual/pages/01-base-utility.md).)*
+- **Program Name**: Displays the current 16-character patch name across two large lines so you always know which patch is loaded while adjusting performance and scale settings. *(To rename the patch, use the interactive character editor on [Page 1: Utility](https://github.com/timandtheocean/e1-korg-z1/tree/main/usermanual/pages/01-base-utility.md).)*
 
 ---
 

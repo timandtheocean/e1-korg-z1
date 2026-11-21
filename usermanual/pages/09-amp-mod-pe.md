@@ -1,5 +1,7 @@
 # Page 9: Dual Amplifiers, Stereo Pan & Performance Knobs (`Amp & Mod`)
 
+[← Back to the manual index](https://github.com/timandtheocean/e1-korg-z1/tree/main/usermanual/README.md) · [All manual pages](https://github.com/timandtheocean/e1-korg-z1/tree/main/usermanual/pages)
+
 The **Amp & Mod** page combines two key expressive stages of the Korg Z1:
 1. **Top Half (Rows 1–2)**: The dual voice amplifiers (**Amp 1** and **Amp 2**), including output volume, tremolo/level modulation, built-in analog-style **Distortion**, and stereo **Panning**.
 2. **Bottom Half (Rows 3–6)**: A switchable modulation hub controlled by **MOD SELECT**, giving you complete access to **OSC 1 Pitch & Pan Modulation** and all five front-panel **Performance Editor Knobs (`PE Knob 1` – `PE Knob 5`)**.

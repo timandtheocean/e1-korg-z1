@@ -1,5 +1,7 @@
 # Page 6: Sub Oscillator, Noise Generator & Portamento (`Sub, Noise & Common`)
 
+[← Back to the manual index](https://github.com/timandtheocean/e1-korg-z1/tree/main/usermanual/README.md) · [All manual pages](https://github.com/timandtheocean/e1-korg-z1/tree/main/usermanual/pages)
+
 The **Sub, Noise & Common** page controls the Korg Z1's third pitched sound source (**Sub Oscillator**), its **Noise Generator** (which includes a dedicated multimode **Noise Filter** separate from the two main voice filters), and the patch-wide **Pitch Bend & Portamento** behavior.
 
 ---
@@ -33,7 +35,7 @@ The Sub Oscillator tracks the pitch of **Oscillator 1** one octave below to add 
   - `Saw`: Bright sub-octave buzz.
   - `Pulse`: Hollow square-wave sub-octave punch.
 
-*(Set the Sub Oscillator's level and routing into Filter 1 and Filter 2 on [Page 7: Mixer](file:///home/timbos/src/Z1/usermanual/pages/05-mixer.md).)*
+*(Set the Sub Oscillator's level and routing into Filter 1 and Filter 2 on [Page 7: Mixer](https://github.com/timandtheocean/e1-korg-z1/tree/main/usermanual/pages/05-mixer.md).)*
 
 ---
 
