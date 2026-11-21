@@ -52,7 +52,7 @@ Overlay.__index = function(t, k)
     return function() end
 end
 function Overlay:getValueByIndex(i) local it = self.items[i + 1]; return it and it.value end
-function Overlay:getLabelByIndex(i) local it = self.items[i + 1]; return it and it.label end
+function Overlay:getLabel(i) local it = self.items[i + 1]; return it and it.label end
 function Overlay:getIndexByValue(v)
     for i, it in ipairs(self.items) do
         if it.value == v then return i - 1 end
@@ -137,6 +137,8 @@ function Message:setMax(v) self.max = v end
 
 function Value:getId() return self.id end
 function Value:getControl() return self.control end
+function Value:setName(n) self.name = n end
+function Value:getName() return self.name or "" end
 function Value:getMessage() return self.message end
 function Value:setOverlayId(id) self.overlayId = id end
 function Value:getOverlayId() return self.overlayId end

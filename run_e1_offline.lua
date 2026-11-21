@@ -66,7 +66,7 @@ overlays = {
             local item = self.items[idx + 1]
             return item and item.value or idx
         end
-        function obj:getLabelByIndex(idx)
+        function obj:getLabel(idx)
             local item = self.items[idx + 1]
             return item and item.label
         end
@@ -135,6 +135,8 @@ local function makeControl(cid, name, visible, valSpecs)
         function vo:getId() return self.id end
         function vo:getControl() return self.ctrl end
         function vo:getMessage() return self.msg end
+        function vo:setName(n) self.name = n end
+        function vo:getName() return self.name or "" end
         function vo:setOverlayId(ov) self.ovId = ov end
         function vo:setRange(min, max, def, _)
             self.min = min

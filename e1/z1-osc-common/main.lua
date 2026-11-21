@@ -635,7 +635,7 @@ function getOscModelName(oscIdx)
     local isOsc2 = (oscIdx == 2)
     local sel = isOsc2 and selectedOsc2Model or selectedOsc1Model
     local ov = overlays.get(isOsc2 and OV.OSC2_TYPE or OV.OSC1_TYPE)
-    return (ov and ov.getLabelByIndex and ov:getLabelByIndex(sel)) or "Standard OSC"
+    return (ov and ov.getLabel and ov:getLabel(sel)) or "Standard OSC"
 end
 
 -- ============================================================================
@@ -679,6 +679,15 @@ end
 -- 3. Custom Paint Callback & Dynamic Page Relayout (Pages 2 & 3)
 -- ============================================================================
 
+-- Brass, Reed, Plucked String and Bowed String on OSC1 use both oscillators, so OSC2 is unavailable.
+function isOsc2Locked()
+    return selectedOsc1Model >= 9
+end
+
+local osc2LockApplied = false
+local OSC2_COMMON_CIDS = { 9, 10, 11, 12, 19, 20, 21, 22, 23, 31, 32, 33, 34 }
+local OSC2_PITCH_MOD_CIDS = { [31] = true, [32] = true, [33] = true, [34] = true }
+
 function paintOscModel(control)
     local isOsc2 = (control:getId() == 8)
     local bounds = control:getBounds()
@@ -688,6 +697,13 @@ function paintOscModel(control)
     graphics.fillRect(0, 0, w, h)
     graphics.setColor(isOsc2 and 0x529DEC or 0xF49500)
     graphics.drawRect(0, 0, w, h)
+
+    if isOsc2 and isOsc2Locked() then
+        graphics.setColor(0x6A7380)
+        graphics.print(6, 3, "OSC2 MODEL [--]", w - 12, LEFT, REGULAR, SMALL)
+        graphics.print(6, 23, "DISABLED", w - 12, LEFT, BOLD, MEDIUM)
+        return
+    end
 
     local sel = isOsc2 and selectedOsc2Model or selectedOsc1Model
     graphics.setColor(isOsc2 and 0x529DEC or ORANGE)
@@ -770,6 +786,29 @@ local function applyDynamicSlots(defs, slotFrom, slotTo, slotOffset, faderBase, 
     end
 end
 
+local function hideOsc2Slots()
+    for slot = 3, 36 do
+        for _, cid in ipairs({ 700 + slot, 750 + slot, 800 + slot }) do
+            local c = controls.get(cid)
+            if c and c:isVisible() then c:setVisible(false) end
+        end
+    end
+end
+
+function updateOsc2Lock()
+    local locked = isOsc2Locked()
+    if locked == osc2LockApplied then return end
+    osc2LockApplied = locked
+    window.stop()
+    for _, cid in ipairs(OSC2_COMMON_CIDS) do
+        local c = controls.get(cid)
+        local show = not locked and not (oscPresetView and OSC2_PITCH_MOD_CIDS[cid])
+        if c and c:isVisible() ~= show then c:setVisible(show) end
+    end
+    window.resume()
+    applyOscModel(2, selectedOsc2Model)
+end
+
 function applyOscModel(oscIdx, modelIdx)
     local isOsc2 = (oscIdx == 2)
     local models = isOsc2 and OSC2_MODELS or OSC1_MODELS
@@ -801,7 +840,11 @@ function applyOscModel(oscIdx, modelIdx)
     if window and window.stop then
         window.stop()
     end
+    local locked2 = isOsc2 and isOsc2Locked()
     local header = prefix .. " - " .. getOscModelName(oscIdx)
+    if locked2 then
+        header = "OSC2 - DISABLED (OSC1 " .. getOscModelName(1) .. " uses both oscillators)"
+    end
     if pages and pages.get then
         local pg = pages.get(pageId)
         if pg and pg.setName and (not pg.getName or pg:getName() ~= header) then
@@ -813,9 +856,16 @@ function applyOscModel(oscIdx, modelIdx)
         grp:setLabel(header)
     end
 
-    applyDynamicSlots(defs, 3, 36, 2, faderBase, listBase, slotDefMap, oscSaved, oscIdx, suppressSlot)
+    if locked2 then
+        hideOsc2Slots()
+    else
+        applyDynamicSlots(defs, 3, 36, 2, faderBase, listBase, slotDefMap, oscSaved, oscIdx, suppressSlot)
+    end
     if window and window.resume then
         window.resume()
+    end
+    if not isOsc2 then
+        updateOsc2Lock()
     end
     repaintModelWidgets()
     if oscPresetView and showOscPresetManager then
@@ -911,6 +961,13 @@ function onOscType(valueObject, value)
     local isOsc2 = (ctrlId == 8 or ctrlId == 601)
     local oscIdx = isOsc2 and 2 or 1
     local maxType = isOsc2 and 8 or 12
+    if isOsc2 and isOsc2Locked() then
+        suppressModelCallback = true
+        valueObject:updateValue(selectedOsc2Model)
+        suppressModelCallback = false
+        info.setText("OSC2 disabled: OSC1 " .. getOscModelName(1) .. " uses both oscillators")
+        return
+    end
     local v = math.floor(value)
     if ctrlId == 301 or ctrlId == 601 then
         local ov = overlays.get(isOsc2 and OV.OSC2_TYPE or OV.OSC1_TYPE)
@@ -1340,7 +1397,8 @@ function setOscPresetView(on)
     end
     for _, cid in ipairs(OSC_COMMON_CS3_CTRLS) do
         local c = controls.get(cid)
-        if c and not c:isVisible() then c:setVisible(true) end
+        local show = not (isOsc2Locked() and OSC2_PITCH_MOD_CIDS[cid])
+        if c and c:isVisible() ~= show then c:setVisible(show) end
     end
     local grp3 = preset.getGroup(52)
     if grp3 then grp3:setLabel("OSC 1 & OSC 2 - PITCH MODULATION 1 & DYNAMIC CONTROLLER") end

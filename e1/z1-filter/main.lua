@@ -151,6 +151,15 @@ EGS = {
 
 local HANDLES = { "l1", "r1", "l2", "r2", "l3", "r3", "l4", "r4" }
 
+-- Rate handles show inverted Z1 times (Z1: 0 = fastest, 99 = slowest; the widget draws a high rate as fast).
+-- Saved curves and widget values use the widget (inverted) scale; Z1 values are flipped at the sysex boundary.
+local function flipRate(handleId, v)
+    if handleId:sub(1, 1) == "r" then
+        return 99 - v
+    end
+    return v
+end
+
 -- Saved curve values per EG (1..5) in memory (shared with z1-eg so edits on either page stay in sync)
 egCurveSaved = _G.egCurveSaved or {}
 _G.egCurveSaved = egCurveSaved
@@ -159,10 +168,10 @@ for egId = 1, 5 do
     if not egCurveSaved[egId] then
         egCurveSaved[egId] = {
             start = 0,
-            l1 = isAmp and 99 or 0, r1 = 0,
-            l2 = isAmp and 99 or 0, r2 = 0,
-            l3 = isAmp and 99 or 0, r3 = 0,
-            l4 = 0,                 r4 = 0,
+            l1 = isAmp and 99 or 0, r1 = 99,
+            l2 = isAmp and 99 or 0, r2 = 99,
+            l3 = isAmp and 99 or 0, r3 = 99,
+            l4 = 0,                 r4 = 99,
         }
     end
 end
@@ -301,6 +310,12 @@ function updateAssignedEgWidget(restoreValues)
 
     envCtrl:setName(fltPrefix .. eg.name)
     envCtrl:setColor(eg.isAmp and RED or BLUE)
+
+    -- The Amp EG has no Release Level on the Z1, so its handle name is blanked
+    local l4 = envCtrl:getValue("l4")
+    if l4 then
+        l4:setName(eg.isAmp and " " or "R. Level")
+    end
 
     local lmin = eg.isAmp and 0 or -99
     if restoreValues then
@@ -581,7 +596,7 @@ function onEg3Handle(valueObject, value)
     if not paramId then
         return -- e.g. Amp EG l4 (Release Level is reserved on Z1)
     end
-    sendParamChange(0, paramId, v)
+    sendParamChange(0, paramId, flipRate(handleId, v))
 end
 
 -- Callback for Control 5: Assigned Cutoff EG Start Level (EG1..EG4; hidden for Amp EG)
@@ -751,7 +766,7 @@ local function syncEgCurveFromParams(p0)
             for _, h in ipairs(HANDLES) do
                 local pid = eg.curve[h]
                 if pid and p0[pid] ~= nil then
-                    saved[h] = p0[pid]
+                    saved[h] = flipRate(h, p0[pid])
                 end
             end
         end

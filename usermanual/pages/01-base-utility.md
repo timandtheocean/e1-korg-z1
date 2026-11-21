@@ -48,7 +48,7 @@ When you load the preset, the Electra One automatically queries the Korg Z1 and 
 On the Korg Z1 hardware, switching to another program immediately discards any unsaved edits in the edit buffer. The Electra One protects your work with an automatic **30-second safety window** plus manual snapshot backups:
 
 - **Automatic 30-Second Protection**: Every time you edit a knob or slider, the Electra One keeps a backup of your work in memory. If you accidentally switch programs on the Z1 (or tap **Patch Req**), your previous edits remain protected for **30 seconds** without being overwritten by the newly loaded patch.
-- **Backup Now**: Manually freezes your current patch into the backup slot at any time—ideal right before experimenting with major sound changes.
+- **Backup Now**: Manually freezes your current patch into the backup slot at any time—ideal right before experimenting with major sound changes. Backups are kept in the Electra One's memory only, so they are lost when you power it off.
 - **Recover Backup**: Restores your backed-up patch to all controls on the Electra One **and transmits the complete patch back to the Korg Z1 edit buffer** so the synth immediately plays your recovered sound again.
 
 ---
@@ -58,6 +58,7 @@ On the Korg Z1 hardware, switching to another program immediately discards any u
 - **Undo**: Steps backward through your last **16 parameter edits** and immediately updates the Korg Z1.
 - **Redo**: Steps forward through any changes you just undid.
 - **Smart Knob Grouping**: Smoothly sweeping a knob or fader is grouped into a **single Undo step**, so pressing **Undo** returns the parameter to where it started before the sweep rather than stepping through every single intermediate value.
+- **Memory Only**: The undo history is kept in the Electra One's memory and is cleared when you power it off. It is not written to snapshot slots, because saving a snapshot freezes the Electra One for several seconds on firmware 5.1.0.
 - **Clean History**: Moving the patch-name cursor or typing letters into the patch name does not clutter your sound-design undo history.
 
 ---
@@ -112,6 +113,9 @@ Tap the **Tune Preset** button on the right side of Row 5 to open or close the o
 - **Rename**: Updates the name of an existing saved tuning preset without altering its stored cent values.
 - **Load**: Loads the selected tuning preset into the editor and transmits the scale directly to the Korg Z1.
 - **Delete**: Clears the selected tuning preset slot back to `(Empty)`.
+
+> [!NOTE]
+> **Saving is deferred and permanent.** Tuning, OSC and FX presets are written to a file on the Electra One, so they survive a reboot. Pressing **Save** shows *Saving…* and then *Saved* in the info line, and the screen stays responsive meanwhile. While a preset library is open, the Electra One keeps its storage awake so that the next save is not delayed.
 
 ---
 

@@ -30,10 +30,10 @@ test.case("Assigned Cutoff EG dx7envelope follows F1/F2 Cut ModEG and switches b
     test.eq(controls.get(5):isVisible(), true)
     test.clear()
 
-    test.turn(4, 45, "r1")
+    test.turn(4, 45, "r1") -- widget rate 45 -> Z1 time 54 (rates are inverted)
     test.turn(5, -20)
     test.count(test.sent(), 2)
-    assertSysex(test.sent()[1], { 0xF0, 0x42, 0x30, 0x46, 0x41, 0x01, 0x46, 0x00, 0x2D, 0x00, 0xF7 })
+    assertSysex(test.sent()[1], { 0xF0, 0x42, 0x30, 0x46, 0x41, 0x01, 0x46, 0x00, 0x36, 0x00, 0xF7 })
     assertSysex(test.sent()[2], { 0xF0, 0x42, 0x30, 0x46, 0x41, 0x01, 0x45, 0x00, 0x6C, 0x7F, 0xF7 })
     test.clear()
 
@@ -44,7 +44,7 @@ test.case("Assigned Cutoff EG dx7envelope follows F1/F2 Cut ModEG and switches b
     test.clear()
     test.turn(4, 88, "r1")
     test.count(test.sent(), 1)
-    assertSysex(test.sent()[1], { 0xF0, 0x42, 0x30, 0x46, 0x41, 0x01, 0x20, 0x00, 0x58, 0x00, 0xF7 })
+    assertSysex(test.sent()[1], { 0xF0, 0x42, 0x30, 0x46, 0x41, 0x01, 0x20, 0x00, 0x0B, 0x00, 0xF7 })
 
     test.clear()
     test.turn(20, 1)
@@ -58,7 +58,7 @@ test.case("Assigned Cutoff EG dx7envelope follows F1/F2 Cut ModEG and switches b
     test.clear()
     test.turn(4, 64, "r1")
     test.count(test.sent(), 1)
-    assertSysex(test.sent()[1], { 0xF0, 0x42, 0x30, 0x46, 0x41, 0x01, 0x4E, 0x02, 0x40, 0x00, 0xF7 })
+    assertSysex(test.sent()[1], { 0xF0, 0x42, 0x30, 0x46, 0x41, 0x01, 0x4E, 0x02, 0x23, 0x00, 0xF7 })
 end)
 
 test.case("2BPF Band-B bottom row is hidden for LPF/HPF/BPF/BRF and appears only when Filter Type is 2BPF", function()

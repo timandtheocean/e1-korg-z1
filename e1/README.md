@@ -150,7 +150,7 @@ Automated regression and behavioral equivalence test suite for [preset.z1.json](
 Standalone minimal Electra One **firmware 5.x** Lua API runtime mock executed under `lua5.4` by `verify_merge.py`. It is not meant to be run directly with no globals—`verify_merge.py` prepends `PRESET`, `SCRIPT`, `TESTS`, `IDMAP`, `PAGEMAP`, `SYSEX_IN`, `TICKS`, and `CHECK_DUP_OV`, then calls `dofile("tools/electra_mock.lua")`.
 
 #### What it emulates
-- Preset DOM lookup & mutation: `preset`, `controls`, `groups`, `pages`, `devices`, `overlays` (including `getIndexByValue`, `getValueByIndex`, `getLabelByIndex`, `getLength`, and duplicate-overlay detection).
+- Preset DOM lookup & mutation: `preset`, `controls`, `groups`, `pages`, `devices`, `overlays` (including `getIndexByValue`, `getValueByIndex`, `getLabel`, `getLength`, and duplicate-overlay detection).
 - Control, Value, and Message objects (`getValue`, `updateValue`, `setValue`, `isSet`, `setRange`, `setOverlayId`, `setVisible`, `setName`, `setColor`, `setBounds`, `setPaintCallback`, `setTouchCallback`, `setPotCallback`, `setSwitchCallback`).
 - Hardware stubs & logging: `midi`, `timer`, `window`, `info`, `recall`/`recallJson`, and `graphics` (including `graphics.dim`), recording SysEx (`SX`), formatters (`FMT`), page switches (`PAGE`), and normalized control/group state snapshots (`STATE`).
 

@@ -34,10 +34,16 @@ The **Envelopes** page displays all five envelopes at once as **interactive touc
 
 Each of the five envelope widgets draws the complete multi-stage contour in real time:
 1. **Start Level** *(Dedicated vertical fader immediately to the right of each graph)*: Sets the initial level where the envelope begins at note-on (`-99` to `+99`).
-2. **Attack Time & Attack Level**: How fast the envelope rises (or falls) from the Start Level and the peak level it reaches.
-3. **Decay Time & Break Point Level**: How fast the envelope moves from the Attack peak to the intermediate **Break Point** level.
-4. **Slope Time & Sustain Level**: How fast the envelope travels from the Break Point to the held **Sustain Level** while a key remains pressed.
-5. **Release Time & Release Level**: How fast the envelope finishes after you release the key, and the final target level it lands on (`-99` to `+99`).
+2. **Attack (`Attack` / `A. Level`)**: How fast the envelope rises (or falls) from the Start Level and the peak level it reaches.
+3. **Decay (`Decay` / `B. Level`)**: How fast the envelope moves from the Attack peak to the intermediate **Break** level.
+4. **Slope (`Slope` / `S. Level`)**: How fast the envelope travels from the Break level to the held **Sustain** level while a key remains pressed.
+5. **Release (`Release` / `R. Level`)**: How fast the envelope finishes after you release the key, and the final target level it lands on (`-99` to `+99`).
+
+> [!NOTE]
+> **Time handles are inverted:** the time handles (`Attack`, `Decay`, `Slope`, `Release`) work like the rate handles of a DX7-style envelope. Dragging a handle further to the right makes the stage **faster**, and a value of `99` is the fastest. The value sent to the Z1 is converted automatically, so the Z1 itself still shows its normal time values.
+
+> [!NOTE]
+> **The Amp EG has no Release Level.** The `R. Level` handle is blank on the Amp EG and has no effect. EG 1–4 do have a Release Level.
 
 ### Touch & Knob Editing
 - **Tap & Drag on Any Graph**: Touch any envelope graph on the screen to focus it and drag its stage handles directly, or use the hardware encoders beneath the active envelope to dial in exact stage times and levels.

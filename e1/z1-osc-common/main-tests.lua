@@ -28,18 +28,18 @@ end)
 test.case("OSC1 Model (Control 2, ID 174) and OSC2 Model (Control 8, ID 188) update displayed model and send SysEx", function()
     test.clear()
 
-    -- Select OSC1 Model 9 (Brass Model) -> ID 174 (pl=0x2E, pm=0x01)
-    test.turn(2, 9)
-    test.eq(getOscModelName(1), "Brass Model")
-
     -- Select OSC2 Model 2 (VPM OSC) -> ID 188 (pl=0x3C, pm=0x01)
     test.turn(8, 2)
     test.eq(getOscModelName(2), "VPM OSC")
 
+    -- Select OSC1 Model 9 (Brass Model) -> ID 174 (pl=0x2E, pm=0x01)
+    test.turn(2, 9)
+    test.eq(getOscModelName(1), "Brass Model")
+
     local sent = test.sent()
     test.count(sent, 2)
-    assertZ1(sent[1], 0x2E, 0x01, 0x09, 0x00)
-    assertZ1(sent[2], 0x3C, 0x01, 0x02, 0x00)
+    assertZ1(sent[1], 0x3C, 0x01, 0x02, 0x00)
+    assertZ1(sent[2], 0x2E, 0x01, 0x09, 0x00)
 
     -- Verify setOscModelsFromDump updates displayed models without echoing SysEx
     test.clear()
@@ -47,6 +47,28 @@ test.case("OSC1 Model (Control 2, ID 174) and OSC2 Model (Control 8, ID 188) upd
     test.eq(getOscModelName(1), "Bowed String")
     test.eq(getOscModelName(2), "Organ Model")
     test.none(test.sent())
+    setOscModelsFromDump(0, 0)
+end)
+
+test.case("OSC2 is disabled while OSC1 is Brass/Reed/Plucked/Bowed and restored afterwards", function()
+    setOscModelsFromDump(0, 2)
+    test.clear()
+    test.turn(2, 10)
+    test.eq(isOsc2Locked(), true)
+    test.count(test.sent(), 1)
+    test.eq(controls.get(9):isVisible(), false)
+    test.eq(controls.get(701 + 2):isVisible(), false)
+
+    test.clear()
+    test.turn(8, 5)
+    test.none(test.sent(), "OSC2 model changes are ignored while locked")
+    test.eq(selectedOsc2Model, 2)
+
+    test.turn(2, 3)
+    test.eq(isOsc2Locked(), false)
+    test.eq(controls.get(9):isVisible(), true)
+    test.eq(selectedOsc2Model, 2)
+    setOscModelsFromDump(0, 0)
 end)
 
 test.case("OSC 1 Pitch, Slope & Pitch Modulation controls send IDs 175..187 (ExID 0)", function()

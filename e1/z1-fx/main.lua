@@ -667,7 +667,7 @@ end
 local function unitTypeLabel(unit, alg)
     local ovId = (unit == 0 and OV.FX1_TYPE) or (unit == 1 and OV.FX2_TYPE) or OV.MFX_TYPE
     local ov = overlays.get(ovId)
-    return (ov and ov.getLabelByIndex and ov:getLabelByIndex(alg or 0)) or "?"
+    return (ov and ov.getLabel and ov:getLabel(alg or 0)) or "?"
 end
 
 function isFx2Available()

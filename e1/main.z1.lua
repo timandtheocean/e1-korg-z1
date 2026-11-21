@@ -513,8 +513,11 @@ undoPendingSnapshot   = false
 handshakeRetrySeconds = 0
 timer                 = timer or {}
 
+SNAPSHOTS_ENABLED = false
+
 local function hasSnapshotsApi()
-    return type(_G.snapshots) == "table"
+    return SNAPSHOTS_ENABLED
+        and type(_G.snapshots) == "table"
         and type(_G.snapshots.save) == "function"
         and type(_G.snapshots.load) == "function"
 end
@@ -3104,8 +3107,16 @@ function getOscModelName(oscIdx)
     local isOsc2 = (oscIdx == 2)
     local sel = isOsc2 and selectedOsc2Model or selectedOsc1Model
     local ov = overlays.get(isOsc2 and OV.OSC2_TYPE or OV.OSC1_TYPE)
-    return (ov and ov.getLabelByIndex and ov:getLabelByIndex(sel)) or "Standard OSC"
+    return (ov and ov.getLabel and ov:getLabel(sel)) or "Standard OSC"
 end
+
+function isOsc2Locked()
+    return selectedOsc1Model >= 9
+end
+
+local osc2LockApplied = false
+local OSC2_COMMON_CIDS = { 9, 10, 11, 12, 19, 20, 21, 22, 23, 31, 32, 33, 34 }
+local OSC2_PITCH_MOD_CIDS = { [31] = true, [32] = true, [33] = true, [34] = true }
 
 function paintOscModel(control)
     local isOsc2 = (__LID(control:getId()) == 8)
@@ -3116,6 +3127,13 @@ function paintOscModel(control)
     graphics.fillRect(0, 0, w, h)
     graphics.setColor(isOsc2 and 0x529DEC or 0xF49500)
     graphics.drawRect(0, 0, w, h)
+
+    if isOsc2 and isOsc2Locked() then
+        graphics.setColor(0x6A7380)
+        graphics.print(6, 3, "OSC2 MODEL [--]", w - 12, LEFT, REGULAR, SMALL)
+        graphics.print(6, 23, "DISABLED", w - 12, LEFT, BOLD, MEDIUM)
+        return
+    end
 
     local sel = isOsc2 and selectedOsc2Model or selectedOsc1Model
     graphics.setColor(isOsc2 and 0x529DEC or ORANGE)
@@ -3130,6 +3148,29 @@ local function repaintModelWidgets()
         local c = preset.getControl(cid)
         if c then c:repaint() end
     end
+end
+
+local function hideOsc2Slots()
+    for slot = 3, 36 do
+        for _, cid in ipairs({ 700 + slot, 750 + slot, 800 + slot }) do
+            local c = controls.get(cid)
+            if c and c:isVisible() then c:setVisible(false) end
+        end
+    end
+end
+
+function updateOsc2Lock()
+    local locked = isOsc2Locked()
+    if locked == osc2LockApplied then return end
+    osc2LockApplied = locked
+    window.stop()
+    for _, cid in ipairs(OSC2_COMMON_CIDS) do
+        local c = controls.get(cid)
+        local show = not locked and not (oscPresetView and OSC2_PITCH_MOD_CIDS[cid])
+        if c and c:isVisible() ~= show then c:setVisible(show) end
+    end
+    window.resume()
+    applyOscModel(2, selectedOsc2Model)
 end
 
 function applyOscModel(oscIdx, modelIdx)
@@ -3163,7 +3204,11 @@ function applyOscModel(oscIdx, modelIdx)
     if window and window.stop then
         window.stop()
     end
+    local locked2 = isOsc2 and isOsc2Locked()
     local header = prefix .. " - " .. getOscModelName(oscIdx)
+    if locked2 then
+        header = "OSC2 - DISABLED (OSC1 " .. getOscModelName(1) .. " uses both oscillators)"
+    end
     if pages and pages.get then
         local pg = pages.get(pageId)
         if pg and pg.setName and (not pg.getName or pg:getName() ~= header) then
@@ -3175,9 +3220,16 @@ function applyOscModel(oscIdx, modelIdx)
         grp:setLabel(header)
     end
 
-    applyDynamicSlots(defs, 3, 36, 2, faderBase, listBase, slotDefMap, oscSaved, oscIdx, suppressSlot)
+    if locked2 then
+        hideOsc2Slots()
+    else
+        applyDynamicSlots(defs, 3, 36, 2, faderBase, listBase, slotDefMap, oscSaved, oscIdx, suppressSlot)
+    end
     if window and window.resume then
         window.resume()
+    end
+    if not isOsc2 then
+        updateOsc2Lock()
     end
     repaintModelWidgets()
     if oscPresetView and showOscPresetManager then
@@ -3251,6 +3303,13 @@ function onOscType(valueObject, value)
     local isOsc2 = (ctrlId == 8 or ctrlId == 601)
     local oscIdx = isOsc2 and 2 or 1
     local maxType = isOsc2 and 8 or 12
+    if isOsc2 and isOsc2Locked() then
+        suppressModelCallback = true
+        valueObject:updateValue(selectedOsc2Model)
+        suppressModelCallback = false
+        info.setText("OSC2 disabled: OSC1 " .. getOscModelName(1) .. " uses both oscillators")
+        return
+    end
     local v = math.floor(value)
     if ctrlId == 301 or ctrlId == 601 then
         local ov = overlays.get(isOsc2 and OV.OSC2_TYPE or OV.OSC1_TYPE)
@@ -3615,7 +3674,8 @@ function setOscPresetView(on)
     end
     for _, cid in ipairs(OSC_COMMON_CS3_CTRLS) do
         local c = controls.get(cid)
-        if c and not c:isVisible() then c:setVisible(true) end
+        local show = not (isOsc2Locked() and OSC2_PITCH_MOD_CIDS[cid])
+        if c and c:isVisible() ~= show then c:setVisible(show) end
     end
     local grp3 = preset.getGroup(52)
     if grp3 then grp3:setLabel("OSC 1 & OSC 2 - PITCH MODULATION 1 & DYNAMIC CONTROLLER") end
@@ -3923,7 +3983,9 @@ do
     local ok, err = pcall(__module_z1_osc_common, env)
     if not ok then print("Z1 merged: error loading z1-osc-common: " .. tostring(err)) end
     if rawget(_G, "getOscModelName") == nil then _G.getOscModelName = env.getOscModelName end
+    if rawget(_G, "isOsc2Locked") == nil then _G.isOsc2Locked = env.isOsc2Locked end
     if rawget(_G, "paintOscModel") == nil then _G.paintOscModel = env.paintOscModel end
+    if rawget(_G, "updateOsc2Lock") == nil then _G.updateOsc2Lock = env.updateOsc2Lock end
     if rawget(_G, "applyOscModel") == nil then _G.applyOscModel = env.applyOscModel end
     if rawget(_G, "setOscModelsFromDump") == nil then _G.setOscModelsFromDump = env.setOscModelsFromDump end
     if rawget(_G, "showOscPresetManager") == nil then _G.showOscPresetManager = env.showOscPresetManager end
@@ -4346,6 +4408,13 @@ EGS = {
 
 local HANDLES = { "l1", "r1", "l2", "r2", "l3", "r3", "l4", "r4" }
 
+local function flipRate(handleId, v)
+    if handleId:sub(1, 1) == "r" then
+        return 99 - v
+    end
+    return v
+end
+
 egCurveSaved = _G.egCurveSaved or {}
 _G.egCurveSaved = egCurveSaved
 for egId = 1, 5 do
@@ -4353,10 +4422,10 @@ for egId = 1, 5 do
     if not egCurveSaved[egId] then
         egCurveSaved[egId] = {
             start = 0,
-            l1 = isAmp and 99 or 0, r1 = 0,
-            l2 = isAmp and 99 or 0, r2 = 0,
-            l3 = isAmp and 99 or 0, r3 = 0,
-            l4 = 0,                 r4 = 0,
+            l1 = isAmp and 99 or 0, r1 = 99,
+            l2 = isAmp and 99 or 0, r2 = 99,
+            l3 = isAmp and 99 or 0, r3 = 99,
+            l4 = 0,                 r4 = 99,
         }
     end
 end
@@ -4442,6 +4511,11 @@ function updateAssignedEgWidget(restoreValues)
 
     envCtrl:setName(fltPrefix .. eg.name)
     envCtrl:setColor(eg.isAmp and RED or BLUE)
+
+    local l4 = envCtrl:getValue("l4")
+    if l4 then
+        l4:setName(eg.isAmp and " " or "R. Level")
+    end
 
     local lmin = eg.isAmp and 0 or -99
     if restoreValues then
@@ -4719,7 +4793,7 @@ function onEg3Handle(valueObject, value)
     if not paramId then
         return
     end
-    sendParamChange(0, paramId, v)
+    sendParamChange(0, paramId, flipRate(handleId, v))
 end
 
 function onEgStartLevel(valueObject, value)
@@ -4857,7 +4931,7 @@ local function syncEgCurveFromParams(p0)
             for _, h in ipairs(HANDLES) do
                 local pid = eg.curve[h]
                 if pid and p0[pid] ~= nil then
-                    saved[h] = p0[pid]
+                    saved[h] = flipRate(h, p0[pid])
                 end
             end
         end
@@ -5254,6 +5328,13 @@ local MOD_LABELS = {
 
 local selectedEg = 0
 
+local function flipRate(handleId, v)
+    if handleId:sub(1, 1) == "r" then
+        return 99 - v
+    end
+    return v
+end
+
 egCurveSaved = _G.egCurveSaved or {}
 _G.egCurveSaved = egCurveSaved
 for egId = 1, 5 do
@@ -5261,10 +5342,10 @@ for egId = 1, 5 do
     if not egCurveSaved[egId] then
         egCurveSaved[egId] = {
             start = 0,
-            l1 = isAmp and 99 or 0, r1 = 0,
-            l2 = isAmp and 99 or 0, r2 = 0,
-            l3 = isAmp and 99 or 0, r3 = 0,
-            l4 = 0,                 r4 = 0,
+            l1 = isAmp and 99 or 0, r1 = 99,
+            l2 = isAmp and 99 or 0, r2 = 99,
+            l3 = isAmp and 99 or 0, r3 = 99,
+            l4 = 0,                 r4 = 99,
         }
     end
 end
@@ -5311,7 +5392,7 @@ function onEnvHandle(valueObject, value)
     if not paramId then
         return
     end
-    sendParamChange(0, paramId, v)
+    sendParamChange(0, paramId, flipRate(handleId, v))
 end
 
 function onStartLevel(valueObject, value)
@@ -5417,11 +5498,12 @@ function preset.onZ1Param(exId, paramId, z1Val)
         end
         for _, h in ipairs(EG_HANDLES) do
             if eg.curve[h] == paramId then
-                if egCurveSaved and egCurveSaved[egId] then egCurveSaved[egId][h] = z1Val end
+                local dv = flipRate(h, z1Val)
+                if egCurveSaved and egCurveSaved[egId] then egCurveSaved[egId][h] = dv end
                 local ec = controls.get(egId)
                 if ec then
                     local vo = ec:getValue(h)
-                    if vo then vo:updateValue(z1Val) end
+                    if vo then vo:updateValue(dv) end
                     ec:repaint()
                 end
                 return
@@ -5459,7 +5541,7 @@ function preset.onZ1Dump(params)
         for _, h in ipairs(EG_HANDLES) do
             local pid = eg.curve[h]
             if pid and p0[pid] ~= nil then
-                local v = p0[pid]
+                local v = flipRate(h, p0[pid])
                 if egCurveSaved and egCurveSaved[egId] then egCurveSaved[egId][h] = v end
                 if ec then
                     local vo = ec:getValue(h)
@@ -5688,7 +5770,7 @@ local function makeWavePainter(lfoIdx)
         end
 
         local ov = overlays.get(OV.LFO_WAVE)
-        local wName = (ov and ov.getLabelByIndex and ov:getLabelByIndex(st.wave)) or "Wave"
+        local wName = (ov and ov.getLabel and ov:getLabel(st.wave)) or "Wave"
         graphics.setColor(WHITE)
         graphics.print(5, 2, string.format("LFO%d %s", lfoIdx, wName), w - 10, LEFT, REGULAR, SMALL)
     end
@@ -6261,7 +6343,7 @@ end
 local function unitTypeLabel(unit, alg)
     local ovId = (unit == 0 and OV.FX1_TYPE) or (unit == 1 and OV.FX2_TYPE) or OV.MFX_TYPE
     local ov = overlays.get(ovId)
-    return (ov and ov.getLabelByIndex and ov:getLabelByIndex(alg or 0)) or "?"
+    return (ov and ov.getLabel and ov:getLabel(alg or 0)) or "?"
 end
 
 function isFx2Available()

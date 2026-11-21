@@ -239,8 +239,13 @@ undoPendingSnapshot   = false
 handshakeRetrySeconds = 0
 timer                 = timer or {}
 
+-- TEMPORARY: snapshots.save() stalls the whole device for ~9 s (see SNAPSHOT_LOCKUP_REPORT.md).
+-- While false, undo/redo and backups work from RAM only.
+SNAPSHOTS_ENABLED = false
+
 local function hasSnapshotsApi()
-    return type(_G.snapshots) == "table"
+    return SNAPSHOTS_ENABLED
+        and type(_G.snapshots) == "table"
         and type(_G.snapshots.save) == "function"
         and type(_G.snapshots.load) == "function"
 end

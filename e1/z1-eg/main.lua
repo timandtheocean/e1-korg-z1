@@ -146,6 +146,15 @@ local MOD_LABELS = {
 
 local selectedEg = 0
 
+-- Rate handles show inverted Z1 times (Z1: 0 = fastest, 99 = slowest; the widget draws a high rate as fast).
+-- Saved curves and widget values use the widget (inverted) scale; Z1 values are flipped at the sysex boundary.
+local function flipRate(handleId, v)
+    if handleId:sub(1, 1) == "r" then
+        return 99 - v
+    end
+    return v
+end
+
 -- Shared EG curve state (1..5: EG1..EG4, Amp EG) synced with z1-filter's Assigned Cutoff EG view
 egCurveSaved = _G.egCurveSaved or {}
 _G.egCurveSaved = egCurveSaved
@@ -154,10 +163,10 @@ for egId = 1, 5 do
     if not egCurveSaved[egId] then
         egCurveSaved[egId] = {
             start = 0,
-            l1 = isAmp and 99 or 0, r1 = 0,
-            l2 = isAmp and 99 or 0, r2 = 0,
-            l3 = isAmp and 99 or 0, r3 = 0,
-            l4 = 0,                 r4 = 0,
+            l1 = isAmp and 99 or 0, r1 = 99,
+            l2 = isAmp and 99 or 0, r2 = 99,
+            l3 = isAmp and 99 or 0, r3 = 99,
+            l4 = 0,                 r4 = 99,
         }
     end
 end
@@ -241,7 +250,7 @@ function onEnvHandle(valueObject, value)
     if not paramId then
         return -- e.g. Amp EG l4 (Release Level is fixed at 0 on Z1)
     end
-    sendParamChange(0, paramId, v)
+    sendParamChange(0, paramId, flipRate(handleId, v))
 end
 
 -- Callback for Start Level faders 11..14 (EG1..EG4)
@@ -355,11 +364,12 @@ function preset.onZ1Param(exId, paramId, z1Val)
         end
         for _, h in ipairs(EG_HANDLES) do
             if eg.curve[h] == paramId then
-                if egCurveSaved and egCurveSaved[egId] then egCurveSaved[egId][h] = z1Val end
+                local dv = flipRate(h, z1Val)
+                if egCurveSaved and egCurveSaved[egId] then egCurveSaved[egId][h] = dv end
                 local ec = controls.get(egId)
                 if ec then
                     local vo = ec:getValue(h)
-                    if vo then vo:updateValue(z1Val) end
+                    if vo then vo:updateValue(dv) end
                     ec:repaint()
                 end
                 return
@@ -397,7 +407,7 @@ function preset.onZ1Dump(params)
         for _, h in ipairs(EG_HANDLES) do
             local pid = eg.curve[h]
             if pid and p0[pid] ~= nil then
-                local v = p0[pid]
+                local v = flipRate(h, p0[pid])
                 if egCurveSaved and egCurveSaved[egId] then egCurveSaved[egId][h] = v end
                 if ec then
                     local vo = ec:getValue(h)

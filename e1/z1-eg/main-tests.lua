@@ -9,14 +9,14 @@ local function assertSysex(msg, expected)
 end
 
 test.case("EG1 dx7envelope handles send Attack Time (32), Attack Level (33, negative), Release Level (39)", function()
-    -- Control 1 is EG1 dx7envelope: r1 = 32 (0x20), l1 = 33 (0x21), l4 = 39 (0x27)
+    -- Control 1 is EG1 dx7envelope: r1 = 32 (0x20, widget rate 75 -> Z1 time 24), l1 = 33 (0x21), l4 = 39 (0x27)
     test.turn(1, 75, "r1")
     test.turn(1, -40, "l1") -- -40 = 0x3FD8 -> vl=58, vm=7F
     test.turn(1, 50, "l4")
 
     local sent = test.sent()
     test.count(sent, 3)
-    assertSysex(sent[1], { 0xF0, 0x42, 0x30, 0x46, 0x41, 0x01, 0x20, 0x00, 0x4B, 0x00, 0xF7 })
+    assertSysex(sent[1], { 0xF0, 0x42, 0x30, 0x46, 0x41, 0x01, 0x20, 0x00, 0x18, 0x00, 0xF7 })
     assertSysex(sent[2], { 0xF0, 0x42, 0x30, 0x46, 0x41, 0x01, 0x21, 0x00, 0x58, 0x7F, 0xF7 })
     assertSysex(sent[3], { 0xF0, 0x42, 0x30, 0x46, 0x41, 0x01, 0x27, 0x00, 0x32, 0x00, 0xF7 })
 end)
@@ -32,13 +32,13 @@ test.case("EG1..EG4 Start Level faders send params 31, 50, 69, 88", function()
 end)
 
 test.case("Amp EG dx7envelope sends Attack Time (334) and ignores reserved l4 (341)", function()
-    -- Control 5 is Amp EG: r1 = 334 (0x014E -> pl=4E, pm=02), l4 = nil (reserved)
+    -- Control 5 is Amp EG: r1 = 334 (0x014E -> pl=4E, pm=02; widget rate 60 -> Z1 time 39), l4 = nil (reserved)
     test.turn(5, 60, "r1")
     test.turn(5, 20, "l4")
 
     local sent = test.sent()
     test.count(sent, 1, "l4 on Amp EG is reserved and must not transmit")
-    assertSysex(sent[1], { 0xF0, 0x42, 0x30, 0x46, 0x41, 0x01, 0x4E, 0x02, 0x3C, 0x00, 0xF7 })
+    assertSysex(sent[1], { 0xF0, 0x42, 0x30, 0x46, 0x41, 0x01, 0x4E, 0x02, 0x27, 0x00, 0xF7 })
 end)
 
 test.case("Middle row dedicated Amp EG Modulations (21..30) send IDs 342..351", function()
