@@ -1536,7 +1536,7 @@ function onPcPatchReqToggle(_valueObject, value)
     if suppressTune then return end
     autoPatchReqOnPc = (math.floor(value) > 0)
     z1PersistLib.autoPcReq = autoPatchReqOnPc
-    if type(persist) == "function" then pcall(persist, z1PersistLib) end
+    z1RequestPersist()
     info.setText(autoPatchReqOnPc and "PC Patch Req: ON" or "PC Patch Req: OFF")
 end
 
@@ -1715,6 +1715,86 @@ tuneNamePos           = 1
 tuneNameChars         = {}
 local pendingTuneDel  = nil
 local suppressTune    = false
+
+local function plainCopy(t)
+    local out = {}
+    for k, v in pairs(t) do
+        out[k] = (type(v) == "table") and plainCopy(v) or v
+    end
+    return out
+end
+
+if not _G.z1RequestPersist then
+    local pending, waiters = false, {}
+    local warmOwners, warmHandle, warmTicks = {}, nil, 0
+    local WARM_PERIOD_MS, WARM_MAX_TICKS = 20000, 30
+
+    local function writeLib()
+        if type(persist) ~= "function" then return false end
+        return (pcall(persist, _G.z1PersistLib))
+    end
+
+    local function hasSchedule()
+        return type(schedule) == "table" and type(schedule.after) == "function"
+    end
+
+    local function stopWarm()
+        if warmHandle then
+            pcall(schedule.cancel, warmHandle)
+            warmHandle = nil
+        end
+    end
+
+    local function startWarm(initialWrite)
+        if warmHandle or next(warmOwners) == nil or not hasSchedule() then return end
+        warmTicks = 0
+        if initialWrite then
+            pcall(schedule.after, 250, function()
+                if next(warmOwners) ~= nil and not pending then
+                    if info and info.setText then info.setText("Preparing preset storage...") end
+                    writeLib()
+                end
+            end)
+        end
+        local ok, h = pcall(schedule.every, WARM_PERIOD_MS, function()
+            warmTicks = warmTicks + 1
+            if warmTicks > WARM_MAX_TICKS or next(warmOwners) == nil then
+                stopWarm()
+            elseif not pending then
+                writeLib()
+            end
+        end)
+        if ok then warmHandle = h end
+    end
+
+    function _G.z1RequestPersist(onDone)
+        if onDone then waiters[#waiters + 1] = onDone end
+        warmTicks = 0
+        startWarm(false)
+        if pending then return end
+        pending = true
+        local function run()
+            pending = false
+            local ok = writeLib()
+            local w = waiters
+            waiters = {}
+            for _, f in ipairs(w) do pcall(f, ok) end
+        end
+        if not (hasSchedule() and pcall(schedule.after, 50, run)) then
+            run()
+        end
+    end
+
+    function _G.z1WarmPersist(owner, on)
+        if on then
+            warmOwners[owner] = true
+            startWarm(true)
+        else
+            warmOwners[owner] = nil
+            if next(warmOwners) == nil then stopWarm() end
+        end
+    end
+end
 
 z1PersistLib = _G.z1PersistLib or { version = 2, unit = {}, chain = {}, tuning = {}, oscUnit = {}, oscDual = {} }
 _G.z1PersistLib = z1PersistLib
@@ -1895,6 +1975,7 @@ end
 function setTunePresetView(on)
     tunePresetView = on and true or false
     pendingTuneDel = nil
+    z1WarmPersist("tune", tunePresetView)
     window.stop()
     local kbdCtrl = controls.get(20)
     if kbdCtrl and kbdCtrl:isVisible() ~= (not tunePresetView) then
@@ -2229,9 +2310,12 @@ function onTunePresetSave(_valueObject, value)
         s1     = s1,
         s2     = s2,
     }
-    local ok = (type(persist) == "function") and pcall(persist, z1PersistLib) or false
+    local slot = tunePresetSlot
     refreshTuningWidgets()
-    info.setText(string.format("Saved Tuning %02d: %s%s", tunePresetSlot, name, ok and "" or " (RAM)"))
+    info.setText(string.format("Saving Tuning %02d: %s...", slot, name))
+    z1RequestPersist(function(ok)
+        info.setText(string.format("Saved Tuning %02d: %s%s", slot, name, ok and "" or " (RAM)"))
+    end)
 end
 
 function onTunePresetLoad(_valueObject, value)
@@ -2268,7 +2352,7 @@ function onTunePresetRename(_valueObject, value)
     local name = getProgramNameString(tuneNameChars, true)
     if name == "" then name = defaultTunePresetName(tunePresetSlot) end
     e.name = name
-    if type(persist) == "function" then pcall(persist, z1PersistLib) end
+    z1RequestPersist()
     refreshTuningWidgets()
     info.setText("Renamed: " .. name)
 end
@@ -2287,7 +2371,7 @@ function onTunePresetDelete(_valueObject, value)
     end
     pendingTuneDel = nil
     z1PersistLib.tuning[key] = nil
-    if type(persist) == "function" then pcall(persist, z1PersistLib) end
+    z1RequestPersist()
     setNameCharsBuffer(tuneNameChars, defaultTunePresetName(tunePresetSlot), 0x7E)
     refreshTuningWidgets()
     info.setText(string.format("Cleared slot %02d", tunePresetSlot))
@@ -2301,11 +2385,11 @@ function preset.onLoad()
     if type(recall) == "function" and (type(recallJson) ~= "function" or recallJson() ~= nil) then
         local stored = {}
         if pcall(recall, stored) and stored.version == 2 then
-            if type(stored.unit) == "table" then z1PersistLib.unit = stored.unit end
-            if type(stored.chain) == "table" then z1PersistLib.chain = stored.chain end
-            if type(stored.tuning) == "table" then z1PersistLib.tuning = stored.tuning end
-            if type(stored.oscUnit) == "table" then z1PersistLib.oscUnit = stored.oscUnit end
-            if type(stored.oscDual) == "table" then z1PersistLib.oscDual = stored.oscDual end
+            if type(stored.unit) == "table" then z1PersistLib.unit = plainCopy(stored.unit) end
+            if type(stored.chain) == "table" then z1PersistLib.chain = plainCopy(stored.chain) end
+            if type(stored.tuning) == "table" then z1PersistLib.tuning = plainCopy(stored.tuning) end
+            if type(stored.oscUnit) == "table" then z1PersistLib.oscUnit = plainCopy(stored.oscUnit) end
+            if type(stored.oscDual) == "table" then z1PersistLib.oscDual = plainCopy(stored.oscDual) end
             if type(stored.autoPcReq) == "boolean" then
                 autoPatchReqOnPc = stored.autoPcReq
                 z1PersistLib.autoPcReq = stored.autoPcReq
@@ -3243,6 +3327,86 @@ OSC_DUAL_PRESET_SLOTS = 25
 OSC_COMMON_CS3_CTRLS  = { 25, 26, 27, 28, 31, 32, 33, 34 }
 OSC_PRESET_CTRLS      = { 35, 36, 37, 38, 39, 40, 41, 42, 43 }
 
+local function plainCopy(t)
+    local out = {}
+    for k, v in pairs(t) do
+        out[k] = (type(v) == "table") and plainCopy(v) or v
+    end
+    return out
+end
+
+if not _G.z1RequestPersist then
+    local pending, waiters = false, {}
+    local warmOwners, warmHandle, warmTicks = {}, nil, 0
+    local WARM_PERIOD_MS, WARM_MAX_TICKS = 20000, 30
+
+    local function writeLib()
+        if type(persist) ~= "function" then return false end
+        return (pcall(persist, _G.z1PersistLib))
+    end
+
+    local function hasSchedule()
+        return type(schedule) == "table" and type(schedule.after) == "function"
+    end
+
+    local function stopWarm()
+        if warmHandle then
+            pcall(schedule.cancel, warmHandle)
+            warmHandle = nil
+        end
+    end
+
+    local function startWarm(initialWrite)
+        if warmHandle or next(warmOwners) == nil or not hasSchedule() then return end
+        warmTicks = 0
+        if initialWrite then
+            pcall(schedule.after, 250, function()
+                if next(warmOwners) ~= nil and not pending then
+                    if info and info.setText then info.setText("Preparing preset storage...") end
+                    writeLib()
+                end
+            end)
+        end
+        local ok, h = pcall(schedule.every, WARM_PERIOD_MS, function()
+            warmTicks = warmTicks + 1
+            if warmTicks > WARM_MAX_TICKS or next(warmOwners) == nil then
+                stopWarm()
+            elseif not pending then
+                writeLib()
+            end
+        end)
+        if ok then warmHandle = h end
+    end
+
+    function _G.z1RequestPersist(onDone)
+        if onDone then waiters[#waiters + 1] = onDone end
+        warmTicks = 0
+        startWarm(false)
+        if pending then return end
+        pending = true
+        local function run()
+            pending = false
+            local ok = writeLib()
+            local w = waiters
+            waiters = {}
+            for _, f in ipairs(w) do pcall(f, ok) end
+        end
+        if not (hasSchedule() and pcall(schedule.after, 50, run)) then
+            run()
+        end
+    end
+
+    function _G.z1WarmPersist(owner, on)
+        if on then
+            warmOwners[owner] = true
+            startWarm(true)
+        else
+            warmOwners[owner] = nil
+            if next(warmOwners) == nil then stopWarm() end
+        end
+    end
+end
+
 z1PersistLib = _G.z1PersistLib or { version = 2, unit = {}, chain = {}, tuning = {}, oscUnit = {}, oscDual = {} }
 _G.z1PersistLib = z1PersistLib
 z1PersistLib.oscUnit = z1PersistLib.oscUnit or {}
@@ -3433,6 +3597,7 @@ end
 function setOscPresetView(on)
     oscPresetView = on and true or false
     pendingOscDelete = nil
+    z1WarmPersist("osc", oscPresetView)
     local pad = controls.get(24)
     if pad then
         suppressOscPreset = true
@@ -3563,9 +3728,12 @@ function onOscPresetSave(_valueObject, value)
         }
     end
     setOscPresetEntry(oscPresetSlot, entry)
-    local ok = (type(persist) == "function") and pcall(persist, z1PersistLib) or false
+    local slot = oscPresetSlot
     repaintOscPresetList()
-    info.setText(string.format("Saved %02d: %s%s", oscPresetSlot, name, ok and "" or " (RAM)"))
+    info.setText(string.format("Saving %02d: %s...", slot, name))
+    z1RequestPersist(function(ok)
+        info.setText(string.format("Saved %02d: %s%s", slot, name, ok and "" or " (RAM)"))
+    end)
 end
 
 function onOscPresetLoad(_valueObject, value)
@@ -3613,7 +3781,7 @@ function onOscPresetRename(_valueObject, value)
     local name = getProgramNameString(oscPresetName, true)
     if name == "" then name = defaultOscPresetName(oscPresetSlot) end
     e.name = name
-    if type(persist) == "function" then pcall(persist, z1PersistLib) end
+    z1RequestPersist()
     repaintOscPresetList()
     info.setText("Renamed: " .. name)
 end
@@ -3631,7 +3799,7 @@ function onOscPresetDelete(_valueObject, value)
     end
     pendingOscDelete = nil
     setOscPresetEntry(oscPresetSlot, nil)
-    if type(persist) == "function" then pcall(persist, z1PersistLib) end
+    z1RequestPersist()
     setNameCharsBuffer(oscPresetName, defaultOscPresetName(oscPresetSlot), 0x7E)
     syncOscNameChar()
     repaintOscPresetList()
@@ -3646,11 +3814,11 @@ function preset.onLoad()
     if type(recall) == "function" and (type(recallJson) ~= "function" or recallJson() ~= nil) then
         local stored = {}
         if pcall(recall, stored) and stored.version == 2 then
-            if type(stored.unit) == "table" then z1PersistLib.unit = stored.unit end
-            if type(stored.chain) == "table" then z1PersistLib.chain = stored.chain end
-            if type(stored.tuning) == "table" then z1PersistLib.tuning = stored.tuning end
-            if type(stored.oscUnit) == "table" then z1PersistLib.oscUnit = stored.oscUnit end
-            if type(stored.oscDual) == "table" then z1PersistLib.oscDual = stored.oscDual end
+            if type(stored.unit) == "table" then z1PersistLib.unit = plainCopy(stored.unit) end
+            if type(stored.chain) == "table" then z1PersistLib.chain = plainCopy(stored.chain) end
+            if type(stored.tuning) == "table" then z1PersistLib.tuning = plainCopy(stored.tuning) end
+            if type(stored.oscUnit) == "table" then z1PersistLib.oscUnit = plainCopy(stored.oscUnit) end
+            if type(stored.oscDual) == "table" then z1PersistLib.oscDual = plainCopy(stored.oscDual) end
         end
     end
     for _, cid in ipairs({ 2, 8 }) do
@@ -6241,6 +6409,86 @@ PRESET_CTRL = {
     NPOS = 306, NCHAR = 307, RENAME = 308, DELETE = 309,
 }
 
+local function plainCopy(t)
+    local out = {}
+    for k, v in pairs(t) do
+        out[k] = (type(v) == "table") and plainCopy(v) or v
+    end
+    return out
+end
+
+if not _G.z1RequestPersist then
+    local pending, waiters = false, {}
+    local warmOwners, warmHandle, warmTicks = {}, nil, 0
+    local WARM_PERIOD_MS, WARM_MAX_TICKS = 20000, 30
+
+    local function writeLib()
+        if type(persist) ~= "function" then return false end
+        return (pcall(persist, _G.z1PersistLib))
+    end
+
+    local function hasSchedule()
+        return type(schedule) == "table" and type(schedule.after) == "function"
+    end
+
+    local function stopWarm()
+        if warmHandle then
+            pcall(schedule.cancel, warmHandle)
+            warmHandle = nil
+        end
+    end
+
+    local function startWarm(initialWrite)
+        if warmHandle or next(warmOwners) == nil or not hasSchedule() then return end
+        warmTicks = 0
+        if initialWrite then
+            pcall(schedule.after, 250, function()
+                if next(warmOwners) ~= nil and not pending then
+                    if info and info.setText then info.setText("Preparing preset storage...") end
+                    writeLib()
+                end
+            end)
+        end
+        local ok, h = pcall(schedule.every, WARM_PERIOD_MS, function()
+            warmTicks = warmTicks + 1
+            if warmTicks > WARM_MAX_TICKS or next(warmOwners) == nil then
+                stopWarm()
+            elseif not pending then
+                writeLib()
+            end
+        end)
+        if ok then warmHandle = h end
+    end
+
+    function _G.z1RequestPersist(onDone)
+        if onDone then waiters[#waiters + 1] = onDone end
+        warmTicks = 0
+        startWarm(false)
+        if pending then return end
+        pending = true
+        local function run()
+            pending = false
+            local ok = writeLib()
+            local w = waiters
+            waiters = {}
+            for _, f in ipairs(w) do pcall(f, ok) end
+        end
+        if not (hasSchedule() and pcall(schedule.after, 50, run)) then
+            run()
+        end
+    end
+
+    function _G.z1WarmPersist(owner, on)
+        if on then
+            warmOwners[owner] = true
+            startWarm(true)
+        else
+            warmOwners[owner] = nil
+            if next(warmOwners) == nil then stopWarm() end
+        end
+    end
+end
+
 fxLib = _G.z1PersistLib or { version = 2, unit = {}, chain = {}, tuning = {}, oscUnit = {}, oscDual = {} }
 _G.z1PersistLib = fxLib
 fxLib.unit = fxLib.unit or {}
@@ -6308,11 +6556,8 @@ local function setPresetEntry(slot, entry)
     end
 end
 
-local function savePresetLibrary()
-    if type(persist) == "function" then
-        return (pcall(persist, fxLib))
-    end
-    return false
+local function savePresetLibrary(onDone)
+    z1RequestPersist(onDone)
 end
 
 local function defaultPresetName(slot)
@@ -6472,6 +6717,7 @@ end
 
 function setPresetView(on)
     presetView = on and true or false
+    z1WarmPersist("fx", presetView)
     if presetView and presetTarget ~= 3 then
         presetTarget = activeEditUnit
     end
@@ -6597,9 +6843,12 @@ function onPresetSave(_valueObject, value)
         entry = { name = name, v = captureUnitValues(presetTarget) }
     end
     setPresetEntry(presetSlot, entry)
-    local ok = savePresetLibrary()
+    local slot = presetSlot
     repaintPresetList()
-    info.setText(string.format("Saved %02d: %s%s", presetSlot, name, ok and "" or " (RAM only)"))
+    info.setText(string.format("Saving %02d: %s...", slot, name))
+    savePresetLibrary(function(ok)
+        info.setText(string.format("Saved %02d: %s%s", slot, name, ok and "" or " (RAM only)"))
+    end)
 end
 
 function onPresetRename(_valueObject, value)
@@ -6645,11 +6894,11 @@ function preset.onLoad()
     if type(recall) == "function" and (type(recallJson) ~= "function" or recallJson() ~= nil) then
         local stored = {}
         if pcall(recall, stored) and stored.version == 2 then
-            if type(stored.unit) == "table" then fxLib.unit = stored.unit end
-            if type(stored.chain) == "table" then fxLib.chain = stored.chain end
-            if type(stored.tuning) == "table" then fxLib.tuning = stored.tuning end
-            if type(stored.oscUnit) == "table" then fxLib.oscUnit = stored.oscUnit end
-            if type(stored.oscDual) == "table" then fxLib.oscDual = stored.oscDual end
+            if type(stored.unit) == "table" then fxLib.unit = plainCopy(stored.unit) end
+            if type(stored.chain) == "table" then fxLib.chain = plainCopy(stored.chain) end
+            if type(stored.tuning) == "table" then fxLib.tuning = plainCopy(stored.tuning) end
+            if type(stored.oscUnit) == "table" then fxLib.oscUnit = plainCopy(stored.oscUnit) end
+            if type(stored.oscDual) == "table" then fxLib.oscDual = plainCopy(stored.oscDual) end
         end
     end
     local listCtrl = preset.getControl(PRESET_CTRL.LIST)

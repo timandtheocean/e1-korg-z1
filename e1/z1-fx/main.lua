@@ -900,6 +900,90 @@ PRESET_CTRL = {
 --   fxLib.unit["mfx1"]["s1"] = { name = "Big Hall",    v = { Z1 values in MFX_MODELS[1] order } }
 --   fxLib.chain["s12"]       = { name = "Lead Chain", sel = { fx1, fx2, mfx }, top = { 356,357,358,362..365 },
 --                                u1 = {...}, u2 = {...}, u3 = {...} }
+-- recall() returns empty tables flagged as JSON arrays; string keys added to those are dropped by persist().
+-- Copy into plain tables so later saves are written as objects.
+local function plainCopy(t)
+    local out = {}
+    for k, v in pairs(t) do
+        out[k] = (type(v) == "table") and plainCopy(v) or v
+    end
+    return out
+end
+
+-- persist() blocks the UI: ~65 ms per write, ~1.9 s when the card was idle for ~40 s.
+-- Writes are deferred and coalesced; while a preset manager view is open the card is kept warm.
+if not _G.z1RequestPersist then
+    local pending, waiters = false, {}
+    local warmOwners, warmHandle, warmTicks = {}, nil, 0
+    local WARM_PERIOD_MS, WARM_MAX_TICKS = 20000, 30
+
+    local function writeLib()
+        if type(persist) ~= "function" then return false end
+        return (pcall(persist, _G.z1PersistLib))
+    end
+
+    local function hasSchedule()
+        return type(schedule) == "table" and type(schedule.after) == "function"
+    end
+
+    local function stopWarm()
+        if warmHandle then
+            pcall(schedule.cancel, warmHandle)
+            warmHandle = nil
+        end
+    end
+
+    local function startWarm(initialWrite)
+        if warmHandle or next(warmOwners) == nil or not hasSchedule() then return end
+        warmTicks = 0
+        if initialWrite then
+            pcall(schedule.after, 250, function()
+                if next(warmOwners) ~= nil and not pending then
+                    if info and info.setText then info.setText("Preparing preset storage...") end
+                    writeLib()
+                end
+            end)
+        end
+        local ok, h = pcall(schedule.every, WARM_PERIOD_MS, function()
+            warmTicks = warmTicks + 1
+            if warmTicks > WARM_MAX_TICKS or next(warmOwners) == nil then
+                stopWarm()
+            elseif not pending then
+                writeLib()
+            end
+        end)
+        if ok then warmHandle = h end
+    end
+
+    function _G.z1RequestPersist(onDone)
+        if onDone then waiters[#waiters + 1] = onDone end
+        warmTicks = 0
+        startWarm(false)
+        if pending then return end
+        pending = true
+        local function run()
+            pending = false
+            local ok = writeLib()
+            local w = waiters
+            waiters = {}
+            for _, f in ipairs(w) do pcall(f, ok) end
+        end
+        if not (hasSchedule() and pcall(schedule.after, 50, run)) then
+            run()
+        end
+    end
+
+    function _G.z1WarmPersist(owner, on)
+        if on then
+            warmOwners[owner] = true
+            startWarm(true)
+        else
+            warmOwners[owner] = nil
+            if next(warmOwners) == nil then stopWarm() end
+        end
+    end
+end
+
 fxLib = _G.z1PersistLib or { version = 2, unit = {}, chain = {}, tuning = {}, oscUnit = {}, oscDual = {} }
 _G.z1PersistLib = fxLib
 fxLib.unit = fxLib.unit or {}
@@ -967,11 +1051,8 @@ local function setPresetEntry(slot, entry)
     end
 end
 
-local function savePresetLibrary()
-    if type(persist) == "function" then
-        return (pcall(persist, fxLib))
-    end
-    return false
+local function savePresetLibrary(onDone)
+    z1RequestPersist(onDone)
 end
 
 local function defaultPresetName(slot)
@@ -1158,6 +1239,7 @@ end
 
 function setPresetView(on)
     presetView = on and true or false
+    z1WarmPersist("fx", presetView)
     if presetView and presetTarget ~= 3 then
         presetTarget = activeEditUnit
     end
@@ -1297,9 +1379,12 @@ function onPresetSave(_valueObject, value)
         entry = { name = name, v = captureUnitValues(presetTarget) }
     end
     setPresetEntry(presetSlot, entry)
-    local ok = savePresetLibrary()
+    local slot = presetSlot
     repaintPresetList()
-    info.setText(string.format("Saved %02d: %s%s", presetSlot, name, ok and "" or " (RAM only)"))
+    info.setText(string.format("Saving %02d: %s...", slot, name))
+    savePresetLibrary(function(ok)
+        info.setText(string.format("Saved %02d: %s%s", slot, name, ok and "" or " (RAM only)"))
+    end)
 end
 
 function onPresetRename(_valueObject, value)
@@ -1350,11 +1435,11 @@ function preset.onLoad()
     if type(recall) == "function" and (type(recallJson) ~= "function" or recallJson() ~= nil) then
         local stored = {}
         if pcall(recall, stored) and stored.version == 2 then
-            if type(stored.unit) == "table" then fxLib.unit = stored.unit end
-            if type(stored.chain) == "table" then fxLib.chain = stored.chain end
-            if type(stored.tuning) == "table" then fxLib.tuning = stored.tuning end
-            if type(stored.oscUnit) == "table" then fxLib.oscUnit = stored.oscUnit end
-            if type(stored.oscDual) == "table" then fxLib.oscDual = stored.oscDual end
+            if type(stored.unit) == "table" then fxLib.unit = plainCopy(stored.unit) end
+            if type(stored.chain) == "table" then fxLib.chain = plainCopy(stored.chain) end
+            if type(stored.tuning) == "table" then fxLib.tuning = plainCopy(stored.tuning) end
+            if type(stored.oscUnit) == "table" then fxLib.oscUnit = plainCopy(stored.oscUnit) end
+            if type(stored.oscDual) == "table" then fxLib.oscDual = plainCopy(stored.oscDual) end
         end
     end
     local listCtrl = preset.getControl(PRESET_CTRL.LIST)
